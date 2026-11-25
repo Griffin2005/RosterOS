@@ -28,6 +28,7 @@ def seed(publish_demo: bool = True) -> None:
     try:
         if db.scalar(select(M.UserAccount)) is not None:
             print("Database already seeded.")
+            _refresh_dashboard_mirror(db)
             return
         procs = {code: M.Process(code=code, name=name) for code, name in S.PROCESSES}
         db.add_all(procs.values())
@@ -104,6 +105,26 @@ def seed(publish_demo: bool = True) -> None:
                   f"{r.solver_stats.get('status')}); sheets push: {out['sheets'].get('ok')}")
     finally:
         db.close()
+
+
+def _refresh_dashboard_mirror(db) -> None:
+    """The embedded Sheets mock keeps its workbooks in memory, so a database
+    seeded earlier (e.g. baked into the image at build time) boots with an
+    empty dashboard workbook. Re-push the latest published roster into it."""
+    if get_settings().sheets_mode != "embedded":
+        return
+    r = db.scalars(select(M.Roster).where(M.Roster.status == "PUBLISHED")
+                   .order_by(M.Roster.month.desc())).first()
+    if r is None:
+        return
+    try:
+        from .services.sheets_sync import push_dashboards
+        ev = R.evaluate(db, r)
+        push_dashboards(db, ev["problem"], ev["plan"], r)
+        db.commit()
+    except Exception as exc:  # the app works without the mirror
+        db.rollback()
+        print("Dashboard mirror refresh failed:", exc)
 
 
 def reset() -> None:

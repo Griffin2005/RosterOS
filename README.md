@@ -42,6 +42,18 @@ The Compose stack runs:
 - a backup job that writes a `pg_dump` every 15 minutes
 - Redis
 
+### Hosted demo (Render)
+
+The root `Dockerfile` builds a single container: FastAPI serves the API, the built React app and the embedded Google mock on one port. `render.yaml` is a Render Blueprint for it. To deploy, open Render, choose **New → Blueprint**, and pick this repository.
+
+The demo database is SQLite and is seeded while the image builds. Every deploy or restart therefore comes up in the clean demo state, with December published and one acknowledged gap.
+
+On Render's free plan:
+- The service sleeps after 15 minutes idle. The first request after that takes about a minute.
+- Generating a month takes about 40 seconds.
+
+The replica, backups and Redis workers are in the Compose stack and the AWS design, not in this single container.
+
 ### Demo accounts
 
 All accounts use the password `roster@123`.

@@ -1,0 +1,23 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# One Docker web service built from the root Dockerfile. The database is
+# SQLite seeded into the image, so every deploy or restart starts from the
+# clean demo state (December published, one acknowledged gap).
+services:
+  - type: web
+    name: rosteros
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SOLVER_WORKERS
+        value: "2"
+      - key: SOLVER_TIME_LIMIT_S
+        value: "20"
+      - key: ANTHROPIC_API_KEY   # optional; without it the assistant answers from the validator
+        sync: false
