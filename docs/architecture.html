@@ -1,0 +1,965 @@
+<title>RosterOS Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single reading column for prose; figures and tables break out to a wider track, like an engineering design doc. */
+:root {
+  --bg: #F2F5F2;
+  --surface: #FFFFFF;
+  --surface-2: #EAF0EB;
+  --ink: #15231A;
+  --ink-2: #4C5D52;
+  --line: #D6DFD8;
+  --line-strong: #A9B8AD;
+  --brand: #1E5B3E;
+  --brand-2: #2F7D52;
+  --brand-soft: #DDEFE3;
+  --crit: #B23A30;
+  --crit-soft: #FBE7E4;
+  --warn: #9A6412;
+  --warn-soft: #FBF0DC;
+  --info: #2F5E86;
+  --info-soft: #E3EEF7;
+  --hero-a: #0F3D28;
+  --hero-b: #2A7A4F;
+  --on-hero: #F1FAF4;
+  --on-hero-2: #B9DCC6;
+  --f-head: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0D1310; --surface: #141C17; --surface-2: #1B2620; --ink: #E5EDE7; --ink-2: #9DB1A4;
+    --line: #26332B; --line-strong: #3F5247; --brand: #74CF9C; --brand-2: #58B582; --brand-soft: #173424;
+    --crit: #F08A7F; --crit-soft: #3A1E1B; --warn: #E7B562; --warn-soft: #352A15; --info: #8DBBE3; --info-soft: #1A2836;
+    --hero-a: #0B2A1C; --hero-b: #1F5D3C;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0D1310; --surface: #141C17; --surface-2: #1B2620; --ink: #E5EDE7; --ink-2: #9DB1A4;
+  --line: #26332B; --line-strong: #3F5247; --brand: #74CF9C; --brand-2: #58B582; --brand-soft: #173424;
+  --crit: #F08A7F; --crit-soft: #3A1E1B; --warn: #E7B562; --warn-soft: #352A15; --info: #8DBBE3; --info-soft: #1A2836;
+  --hero-a: #0B2A1C; --hero-b: #1F5D3C;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 15px/1.65 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 96px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-head); text-wrap: balance; color: var(--ink); margin: 0; }
+h1 { font-size: clamp(2rem, 4.2vw, 3rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.08; }
+h2 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.08rem; font-weight: 700; }
+p { margin: 0; max-width: 70ch; }
+a { color: var(--brand); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code { background: var(--surface-2); padding: 0.1em 0.38em; border-radius: 5px; }
+.eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--brand); }
+
+/* header */
+header.top { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; align-items: stretch; }
+.intro { display: flex; flex-direction: column; gap: 18px; justify-content: center; }
+.intro p { color: var(--ink-2); font-size: 1.05rem; }
+.hero-card {
+  background: linear-gradient(150deg, var(--hero-a), var(--hero-b));
+  color: var(--on-hero); border-radius: 20px; padding: 26px 26px 22px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.hero-card .eyebrow { color: var(--on-hero-2); }
+.hero-card h3 { color: var(--on-hero); font-size: 1.25rem; }
+.hero-card p { color: var(--on-hero-2); font-size: 0.93rem; }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.fact { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.fact b { font: 700 1.5rem/1.1 var(--f-head); font-variant-numeric: tabular-nums; color: var(--on-hero); }
+.fact span { font-size: 0.75rem; color: var(--on-hero-2); }
+.stack { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 12.5px/1 var(--f-body); padding: 7px 11px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--brand-2); display: inline-block; }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+nav.toc a { text-decoration: none; color: var(--ink-2); font-size: 13px; padding: 6px 10px; border-radius: 8px; }
+nav.toc a:hover { background: var(--brand-soft); color: var(--brand); }
+
+section { display: flex; flex-direction: column; gap: 20px; scroll-margin-top: 20px; }
+.sec-head { display: flex; flex-direction: column; gap: 8px; }
+.sec-head p { color: var(--ink-2); }
+
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.scroll { overflow-x: auto; }
+figure svg.diagram { display: block; width: 100%; height: auto; }
+.fig-wide svg.diagram { min-width: 1120px; }
+.fig-mid svg.diagram { min-width: 920px; }
+figcaption { padding: 14px 20px 16px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13.5px; max-width: none; }
+figcaption b { color: var(--ink); }
+pre.mermaid { margin: 0; padding: 20px; background: var(--surface); min-width: 900px; }
+
+/* SVG vocabulary */
+.n { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+.nb { fill: var(--brand-soft); stroke: var(--brand); stroke-width: 1.4; }
+.nc { fill: var(--crit-soft); stroke: var(--crit); stroke-width: 1.4; }
+.chip { fill: var(--surface-2); stroke: none; }
+.chip-b { fill: var(--surface); stroke: var(--brand); stroke-width: 0.8; stroke-opacity: 0.5; }
+.reg { fill: none; stroke: var(--line-strong); stroke-width: 1.2; }
+.reg-d { fill: none; stroke: var(--line-strong); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.reg-b { fill: none; stroke: var(--brand); stroke-width: 1.2; stroke-dasharray: 5 4; stroke-opacity: 0.7; }
+.t { font: 600 13px var(--f-head); fill: var(--ink); }
+.tb { font: 700 14px var(--f-head); fill: var(--ink); }
+.s { font: 400 11.5px var(--f-body); fill: var(--ink-2); }
+.ct { font: 500 11.5px var(--f-body); fill: var(--ink); }
+.rl { font: 600 10.5px var(--f-mono); fill: var(--ink-2); letter-spacing: 0.05em; text-transform: uppercase; }
+.num { font: 600 10.5px var(--f-mono); fill: var(--brand); letter-spacing: 0.06em; }
+.lbl { font: 500 11px var(--f-body); fill: var(--ink-2); paint-order: stroke; stroke: var(--surface); stroke-width: 5px; stroke-linejoin: round; }
+.lbl-g { fill: var(--brand); }
+.e { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
+.ea { stroke-dasharray: 6 4; }
+.eg { stroke: var(--brand); stroke-width: 1.7; }
+.ec { stroke: var(--crit); }
+.ah { fill: var(--ink-2); }
+.ahg { fill: var(--brand); }
+.ahc { fill: var(--crit); }
+
+/* tables */
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 720px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 11px/1.3 var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); background: var(--surface-2); }
+tr:last-child td { border-bottom: 0; }
+td { font-variant-numeric: tabular-nums; }
+td.k { font-weight: 600; white-space: nowrap; }
+.sev { display: inline-block; font: 600 10.5px/1 var(--f-mono); letter-spacing: 0.05em; padding: 4px 7px; border-radius: 6px; white-space: nowrap; }
+.sev.hard { background: var(--crit-soft); color: var(--crit); }
+.sev.soft { background: var(--warn-soft); color: var(--warn); }
+.sev.info { background: var(--info-soft); color: var(--info); }
+.sev.ok { background: var(--brand-soft); color: var(--brand); }
+
+/* model block */
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.panel p, .panel li { color: var(--ink-2); font-size: 14px; }
+.panel ul, .panel ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.formula { font-family: var(--f-mono); font-size: 13px; background: var(--surface-2); border-radius: 10px; padding: 14px 16px; overflow-x: auto; white-space: pre; color: var(--ink); line-height: 1.7; }
+.callout { border-left: 3px solid var(--brand); background: var(--brand-soft); padding: 14px 18px; border-radius: 0 12px 12px 0; color: var(--ink); font-size: 14px; max-width: none; }
+.callout b { color: var(--brand); }
+.steps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; counter-reset: d; }
+.steps li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+.steps li b { font: 700 14px var(--f-head); color: var(--ink); }
+.steps li .eyebrow { font-size: 11px; }
+
+@media (max-width: 900px) {
+  header.top, .grid2, .grid3 { grid-template-columns: 1fr; }
+  .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .steps { grid-template-columns: 1fr; }
+  body { padding-block: 24px 64px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="intro">
+    <span class="eyebrow">Smart Roster Management System · Architecture v1</span>
+    <h1>RosterOS Architecture</h1>
+    <p>How the roster tool for a multi-brand CX operations team plans, solves, validates and publishes monthly rosters. Working rules and minimum coverage come from Google Sheets. A constraint solver builds the roster, and an independent rule engine checks it. Every gap it cannot close is explained to the operations manager instead of being hidden.</p>
+    <div class="stack">
+      <span class="pill"><i></i>React + TypeScript</span>
+      <span class="pill"><i></i>FastAPI · Python 3.12</span>
+      <span class="pill"><i></i>OR-Tools CP-SAT</span>
+      <span class="pill"><i></i>PostgreSQL 16 + replicas</span>
+      <span class="pill"><i></i>Redis streams</span>
+      <span class="pill"><i></i>Google Sheets API</span>
+      <span class="pill"><i></i>Claude tool-use assistant</span>
+      <span class="pill"><i></i>Docker · AWS ECS</span>
+    </div>
+  </div>
+  <aside class="hero-card" aria-label="Sample dataset and core decision">
+    <span class="eyebrow">Core decision</span>
+    <h3>Optimise, then verify independently</h3>
+    <p>The CP-SAT solver handles mandatory rules as hard constraints and preferences as weighted penalties. Coverage shortfalls become penalised slack, never silent failures. A separate deterministic validator re-checks every roster, including manual edits, before it can be published.</p>
+    <div class="facts">
+      <div class="fact"><b>32</b><span>employees</span></div>
+      <div class="fact"><b>22</b><span>brands (18 single)</span></div>
+      <div class="fact"><b>4</b><span>pods + leads</span></div>
+      <div class="fact"><b>5</b><span>processes</span></div>
+    </div>
+  </aside>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#system">System topology</a>
+  <a href="#engine">Scheduling engine</a>
+  <a href="#data">Data model</a>
+  <a href="#change">Handling changes</a>
+  <a href="#conflicts">Conflict catalogue</a>
+  <a href="#sheets">Google Sheets</a>
+  <a href="#backup">Replication &amp; backups</a>
+  <a href="#roles">Roles &amp; levels</a>
+  <a href="#security">Security</a>
+  <a href="#ai">AI assistant</a>
+  <a href="#docker">Docker &amp; deploy</a>
+  <a href="#assumptions">Assumptions</a>
+  <a href="#plan">Build plan</a>
+</nav>
+
+<!-- ============ 1. SYSTEM ============ -->
+<section id="system">
+  <div class="sec-head">
+    <span class="eyebrow">01 · System topology</span>
+    <h2>Every component, every hop</h2>
+    <p>Production layout on AWS (Mumbai region). Each box inside the ECS cluster is a Docker image. The same images run locally under docker compose, with a Sheets mock standing in for Google.</p>
+  </div>
+
+  <figure class="fig-wide">
+    <div class="scroll">
+    <svg class="diagram" viewBox="0 0 1480 1030" role="img" aria-label="System architecture: browser users reach CloudFront and an AWS load balancer; a FastAPI service in private subnets talks to solver, Sheets sync, AI assistant and scheduler workers; PostgreSQL primary replicates synchronously to a standby, asynchronously to a read replica, and logically over VPN to an office replica; backups flow to S3 and an office NAS; Google Sheets supplies rules and receives rosters; Claude API powers the assistant.">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+        <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahg"/></marker>
+      </defs>
+
+      <!-- legend -->
+      <line x1="20" y1="34" x2="52" y2="34" class="e" marker-end="url(#ah)"/><text x="60" y="38" class="s">request / call</text>
+      <line x1="20" y1="56" x2="52" y2="56" class="e ea" marker-end="url(#ah)"/><text x="60" y="60" class="s">async via Redis stream</text>
+      <line x1="20" y1="78" x2="52" y2="78" class="e eg" marker-end="url(#ahg)"/><text x="60" y="82" class="s">replication / backup</text>
+
+      <!-- Browser -->
+      <rect x="20" y="110" width="150" height="410" rx="12" class="n"/>
+      <text x="95" y="134" class="tb" text-anchor="middle">Browser</text>
+      <text x="95" y="150" class="s" text-anchor="middle">React SPA</text>
+      <text x="32" y="172" class="rl">Roles</text>
+      <rect x="32" y="180" width="126" height="26" rx="6" class="chip"/><text x="95" y="197" class="ct" text-anchor="middle">Super Admin</text>
+      <rect x="32" y="212" width="126" height="26" rx="6" class="chip"/><text x="95" y="229" class="ct" text-anchor="middle">Ops Manager</text>
+      <rect x="32" y="244" width="126" height="26" rx="6" class="chip"/><text x="95" y="261" class="ct" text-anchor="middle">Pod Lead</text>
+      <rect x="32" y="276" width="126" height="26" rx="6" class="chip"/><text x="95" y="293" class="ct" text-anchor="middle">Brand Owner</text>
+      <rect x="32" y="308" width="126" height="26" rx="6" class="chip"/><text x="95" y="325" class="ct" text-anchor="middle">Employee</text>
+      <rect x="32" y="340" width="126" height="26" rx="6" class="chip"/><text x="95" y="357" class="ct" text-anchor="middle">Auditor</text>
+      <text x="32" y="390" class="rl">Surfaces</text>
+      <rect x="32" y="398" width="126" height="26" rx="6" class="chip-b"/><text x="95" y="415" class="ct" text-anchor="middle">5 roster views</text>
+      <rect x="32" y="430" width="126" height="26" rx="6" class="chip-b"/><text x="95" y="447" class="ct" text-anchor="middle">Conflict panel</text>
+      <rect x="32" y="462" width="126" height="26" rx="6" class="chip-b"/><text x="95" y="479" class="ct" text-anchor="middle">AI admin chat</text>
+
+      <!-- AWS -->
+      <rect x="200" y="30" width="955" height="985" rx="16" class="reg"/>
+      <text x="218" y="54" class="rl">AWS · ap-south-1 (Mumbai)</text>
+      <text x="220" y="98" class="rl">Edge &amp; identity</text>
+
+      <rect x="220" y="110" width="140" height="50" rx="10" class="n"/><text x="290" y="131" class="t" text-anchor="middle">Route 53</text><text x="290" y="148" class="s" text-anchor="middle">DNS · health checks</text>
+      <rect x="220" y="185" width="140" height="50" rx="10" class="n"/><text x="290" y="206" class="t" text-anchor="middle">CloudFront + WAF</text><text x="290" y="223" class="s" text-anchor="middle">TLS 1.3 · rate limits</text>
+      <rect x="220" y="285" width="85" height="50" rx="10" class="n"/><text x="262" y="306" class="t" text-anchor="middle">S3</text><text x="262" y="323" class="s" text-anchor="middle">SPA build</text>
+      <rect x="220" y="385" width="140" height="50" rx="10" class="n"/><text x="290" y="406" class="t" text-anchor="middle">Load balancer</text><text x="290" y="423" class="s" text-anchor="middle">public subnets</text>
+      <rect x="220" y="465" width="140" height="50" rx="10" class="n"/><text x="290" y="486" class="t" text-anchor="middle">Cognito</text><text x="290" y="503" class="s" text-anchor="middle">users · MFA · groups</text>
+
+      <line x1="170" y1="135" x2="218" y2="135" class="e" marker-end="url(#ah)"/><text x="194" y="128" class="lbl" text-anchor="middle">DNS</text>
+      <line x1="170" y1="210" x2="218" y2="210" class="e" marker-end="url(#ah)"/><text x="194" y="203" class="lbl" text-anchor="middle">HTTPS</text>
+      <line x1="170" y1="490" x2="218" y2="490" class="e" marker-end="url(#ah)"/><text x="194" y="483" class="lbl" text-anchor="middle">OIDC</text>
+      <line x1="290" y1="160" x2="290" y2="183" class="e" marker-end="url(#ah)"/>
+      <line x1="262" y1="235" x2="262" y2="283" class="e" marker-end="url(#ah)"/><text x="268" y="264" class="lbl">static</text>
+      <line x1="335" y1="235" x2="335" y2="383" class="e" marker-end="url(#ah)"/><text x="348" y="310" class="lbl" text-anchor="middle" transform="rotate(-90 348 310)">/api · /ws</text>
+      <path d="M360,410 H388 V330 H408" class="e" marker-end="url(#ah)"/>
+
+      <!-- VPC -->
+      <rect x="380" y="70" width="765" height="935" rx="14" class="reg-d"/>
+      <text x="396" y="92" class="rl">VPC 10.0.0.0/16 · 2 availability zones</text>
+
+      <!-- App subnet -->
+      <rect x="395" y="104" width="740" height="400" rx="12" class="reg-b"/>
+      <text x="410" y="125" class="rl">Private app subnets · ECS Fargate · one Docker image per box</text>
+
+      <rect x="410" y="140" width="400" height="260" rx="12" class="nb"/>
+      <text x="425" y="164" class="tb">API service</text>
+      <text x="425" y="181" class="s">FastAPI · stateless · 2–6 tasks behind the load balancer</text>
+      <rect x="425" y="196" width="185" height="30" rx="7" class="chip-b"/><text x="437" y="215" class="ct">Auth · RBAC scope guard</text>
+      <rect x="617" y="196" width="185" height="30" rx="7" class="chip-b"/><text x="629" y="215" class="ct">Master data CRUD</text>
+      <rect x="425" y="236" width="185" height="30" rx="7" class="chip-b"/><text x="437" y="255" class="ct">Rules &amp; calendars</text>
+      <rect x="617" y="236" width="185" height="30" rx="7" class="chip-b"/><text x="629" y="255" class="ct">Roster service</text>
+      <rect x="425" y="276" width="185" height="30" rx="7" class="chip-b"/><text x="437" y="295" class="ct">Validation engine</text>
+      <rect x="617" y="276" width="185" height="30" rx="7" class="chip-b"/><text x="629" y="295" class="ct">Change requests</text>
+      <rect x="425" y="316" width="185" height="30" rx="7" class="chip-b"/><text x="437" y="335" class="ct">Backup recommender</text>
+      <rect x="617" y="316" width="185" height="30" rx="7" class="chip-b"/><text x="629" y="335" class="ct">Audit log (append-only)</text>
+      <rect x="425" y="356" width="185" height="30" rx="7" class="chip-b"/><text x="437" y="375" class="ct">WebSocket hub</text>
+      <rect x="617" y="356" width="185" height="30" rx="7" class="chip-b"/><text x="629" y="375" class="ct">Export · CSV / XLSX</text>
+
+      <rect x="870" y="140" width="250" height="75" rx="10" class="n"/><text x="885" y="162" class="t">Sheets sync worker</text><text x="885" y="179" class="s">Sheets API v4 · Calendar API</text><text x="885" y="195" class="s">idempotent, revision-checked</text>
+      <rect x="870" y="230" width="250" height="75" rx="10" class="n"/><text x="885" y="252" class="t">AI assistant service</text><text x="885" y="269" class="s">Claude tool-use agent</text><text x="885" y="285" class="s">propose-only, caller's permissions</text>
+      <rect x="870" y="320" width="250" height="75" rx="10" class="nb"/><text x="885" y="342" class="t">Solver workers</text><text x="885" y="359" class="s">OR-Tools CP-SAT · no DB access</text><text x="885" y="375" class="s">pure function: problem → plan</text>
+      <rect x="870" y="410" width="250" height="75" rx="10" class="n"/><text x="885" y="432" class="t">Scheduled jobs</text><text x="885" y="449" class="s">EventBridge Scheduler → ECS task</text><text x="885" y="465" class="s">monthly draft · nightly checks · dumps</text>
+
+      <line x1="810" y1="160" x2="868" y2="160" class="e ea" marker-end="url(#ah)"/><text x="840" y="154" class="lbl" text-anchor="middle">publish</text>
+      <line x1="870" y1="196" x2="812" y2="196" class="e ea" marker-end="url(#ah)"/><text x="840" y="190" class="lbl" text-anchor="middle">rules vN</text>
+      <line x1="810" y1="250" x2="868" y2="250" class="e" marker-end="url(#ah)"/><text x="840" y="244" class="lbl" text-anchor="middle">chat</text>
+      <line x1="870" y1="286" x2="812" y2="286" class="e" marker-end="url(#ah)"/><text x="840" y="280" class="lbl" text-anchor="middle">tools</text>
+      <line x1="810" y1="340" x2="868" y2="340" class="e ea" marker-end="url(#ah)"/><text x="840" y="334" class="lbl" text-anchor="middle">problem</text>
+      <line x1="870" y1="376" x2="812" y2="376" class="e ea" marker-end="url(#ah)"/><text x="840" y="370" class="lbl" text-anchor="middle">plan</text>
+      <path d="M870,447 H795 V402" class="e" marker-end="url(#ah)"/><text x="835" y="441" class="lbl" text-anchor="middle">trigger</text>
+
+      <!-- Data subnet -->
+      <rect x="395" y="525" width="740" height="235" rx="12" class="reg-d"/>
+      <text x="410" y="546" class="rl">Isolated data subnets · no internet route</text>
+
+      <rect x="410" y="565" width="200" height="65" rx="10" class="n"/><text x="425" y="590" class="t">Read replica</text><text x="425" y="608" class="s">async · lag &lt; 1 s · serves views</text>
+      <rect x="680" y="565" width="180" height="65" rx="10" class="nb"/><text x="695" y="590" class="t">PostgreSQL 16 primary</text><text x="695" y="608" class="s">RDS Multi-AZ · AZ-a</text>
+      <rect x="930" y="565" width="190" height="65" rx="10" class="n"/><text x="945" y="590" class="t">ElastiCache Redis 7</text><text x="945" y="608" class="s">streams: solve · sync · notify</text>
+      <rect x="680" y="675" width="180" height="65" rx="10" class="n"/><text x="695" y="700" class="t">Synchronous standby</text><text x="695" y="718" class="s">AZ-b · failover &lt; 60 s</text>
+
+      <line x1="480" y1="400" x2="480" y2="563" class="e" marker-end="url(#ah)"/><text x="488" y="474" class="lbl">reads · views, reports</text>
+      <line x1="770" y1="400" x2="770" y2="563" class="e" marker-end="url(#ah)"/><text x="762" y="474" class="lbl" text-anchor="end">writes · 1 txn per edit</text>
+      <line x1="680" y1="597" x2="612" y2="597" class="e eg" marker-end="url(#ahg)"/><text x="646" y="590" class="lbl lbl-g" text-anchor="middle">WAL</text>
+      <line x1="770" y1="630" x2="770" y2="673" class="e eg" marker-end="url(#ahg)"/><text x="778" y="656" class="lbl lbl-g">sync commit · RPO 0</text>
+
+      <!-- below data -->
+      <rect x="410" y="785" width="450" height="60" rx="10" class="n"/><text x="425" y="809" class="t">S3 · gateway endpoint</text><text x="425" y="827" class="s">PITR snapshots 35 d · encrypted dumps · exports · Object Lock</text>
+      <rect x="930" y="785" width="190" height="60" rx="10" class="n"/><text x="945" y="809" class="t">Site-to-Site VPN</text><text x="945" y="827" class="s">IPsec to office</text>
+
+      <line x1="770" y1="740" x2="770" y2="783" class="e eg" marker-end="url(#ahg)"/><text x="778" y="767" class="lbl lbl-g">snapshots + WAL</text>
+      <path d="M860,612 H895 V800 H928" class="e eg" marker-end="url(#ahg)"/><text x="884" y="706" class="lbl lbl-g" text-anchor="middle" transform="rotate(-90 884 706)">logical replication</text>
+      <line x1="860" y1="830" x2="928" y2="830" class="e eg" marker-end="url(#ahg)"/><text x="912" y="852" class="lbl lbl-g" text-anchor="middle">pulled</text>
+
+      <!-- security row -->
+      <rect x="395" y="870" width="740" height="120" rx="12" class="reg"/>
+      <text x="410" y="891" class="rl">Security &amp; operations · applies to every box above</text>
+      <rect x="410" y="904" width="168" height="32" rx="7" class="chip"/><text x="494" y="924" class="ct" text-anchor="middle">Secrets Manager</text>
+      <rect x="592" y="904" width="168" height="32" rx="7" class="chip"/><text x="676" y="924" class="ct" text-anchor="middle">KMS customer keys</text>
+      <rect x="774" y="904" width="168" height="32" rx="7" class="chip"/><text x="858" y="924" class="ct" text-anchor="middle">IAM task roles</text>
+      <rect x="956" y="904" width="168" height="32" rx="7" class="chip"/><text x="1040" y="924" class="ct" text-anchor="middle">Security groups</text>
+      <rect x="410" y="946" width="168" height="32" rx="7" class="chip"/><text x="494" y="966" class="ct" text-anchor="middle">CloudWatch + X-Ray</text>
+      <rect x="592" y="946" width="168" height="32" rx="7" class="chip"/><text x="676" y="966" class="ct" text-anchor="middle">CloudTrail</text>
+      <rect x="774" y="946" width="168" height="32" rx="7" class="chip"/><text x="858" y="966" class="ct" text-anchor="middle">GuardDuty</text>
+      <rect x="956" y="946" width="168" height="32" rx="7" class="chip"/><text x="1040" y="966" class="ct" text-anchor="middle">ECR image scanning</text>
+
+      <!-- Google -->
+      <rect x="1230" y="100" width="235" height="305" rx="14" class="reg"/>
+      <text x="1245" y="122" class="rl">Google Workspace</text>
+      <rect x="1245" y="140" width="205" height="55" rx="10" class="n"/><text x="1258" y="162" class="t">Sheet · Rules &amp; Coverage</text><text x="1258" y="180" class="s">ops team edits rules here</text>
+      <rect x="1245" y="215" width="205" height="55" rx="10" class="n"/><text x="1258" y="237" class="t">Sheet · Roster dashboards</text><text x="1258" y="255" class="s">company · pod · brand tabs</text>
+      <rect x="1245" y="290" width="205" height="55" rx="10" class="n"/><text x="1258" y="312" class="t">Calendar API</text><text x="1258" y="330" class="s">public holidays · India</text>
+      <text x="1245" y="372" class="s">Demo: sheets-mock container</text>
+      <text x="1245" y="388" class="s">serves the same API shape</text>
+
+      <line x1="1245" y1="160" x2="1122" y2="160" class="e" marker-end="url(#ah)"/><text x="1190" y="153" class="lbl" text-anchor="middle">pull · 60 s</text>
+      <path d="M1120,185 H1195 V242 H1243" class="e" marker-end="url(#ah)"/><text x="1220" y="235" class="lbl" text-anchor="middle">push</text>
+      <path d="M1245,317 H1175 V205 H1122" class="e" marker-end="url(#ah)"/><text x="1212" y="310" class="lbl" text-anchor="middle">holidays</text>
+
+      <!-- Anthropic -->
+      <rect x="1230" y="430" width="235" height="95" rx="14" class="reg"/>
+      <text x="1245" y="452" class="rl">Anthropic</text>
+      <rect x="1245" y="462" width="205" height="50" rx="10" class="n"/><text x="1258" y="483" class="t">Claude API</text><text x="1258" y="500" class="s">Messages · tool use</text>
+      <path d="M1120,268 H1163 V487 H1243" class="e" marker-end="url(#ah)"/><text x="1205" y="480" class="lbl" text-anchor="middle">HTTPS</text>
+
+      <!-- Office -->
+      <rect x="1230" y="560" width="235" height="445" rx="14" class="reg"/>
+      <text x="1245" y="582" class="rl">Office · local systems</text>
+      <rect x="1245" y="600" width="205" height="60" rx="10" class="nb"/><text x="1258" y="624" class="t">Local PostgreSQL replica</text><text x="1258" y="642" class="s">logical subscriber · read-only</text>
+      <rect x="1245" y="785" width="205" height="60" rx="10" class="n"/><text x="1258" y="809" class="t">Customer gateway</text><text x="1258" y="827" class="s">IPsec peer · firewall</text>
+      <rect x="1245" y="905" width="205" height="72" rx="10" class="nb"/><text x="1258" y="928" class="t">Backup NAS</text><text x="1258" y="946" class="s">restic · every 15 min + nightly</text><text x="1258" y="962" class="s">30 daily · 12 monthly kept</text>
+
+      <line x1="1120" y1="815" x2="1243" y2="815" class="e eg" marker-end="url(#ahg)"/><text x="1182" y="808" class="lbl lbl-g" text-anchor="middle">IPsec tunnel</text>
+      <line x1="1347" y1="785" x2="1347" y2="662" class="e eg" marker-end="url(#ahg)"/><text x="1355" y="726" class="lbl lbl-g">row changes</text>
+      <line x1="1347" y1="845" x2="1347" y2="903" class="e eg" marker-end="url(#ahg)"/><text x="1355" y="878" class="lbl lbl-g">dumps</text>
+    </svg>
+    </div>
+    <figcaption><b>Figure 1.</b> Writes go through the API to a single PostgreSQL primary. The primary replicates synchronously to a standby in a second availability zone (zero data loss on failover), asynchronously to a read replica that serves the heavy roster views, and continuously over VPN to a local replica in the office. Solver workers never touch the database: the API hands them a frozen problem and stores the plan they return.</figcaption>
+  </figure>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Component</th><th>Owns</th><th>Talks to</th><th>Scales by</th></tr></thead>
+      <tbody>
+        <tr><td class="k">API service</td><td>All reads/writes, RBAC scoping, validation on every edit, change requests, audit trail, WebSocket fan-out of roster changes</td><td>Postgres primary + replica, Redis, all workers</td><td>ECS tasks on CPU / request count</td></tr>
+        <tr><td class="k">Solver workers</td><td>Building and solving the CP-SAT model for a full month or a repair window; returns assignments, slack and solver stats</td><td>Redis only (consumes <code>solve</code> stream)</td><td>Queue depth; CPU-optimised tasks</td></tr>
+        <tr><td class="k">Sheets sync worker</td><td>Pulling rules and coverage, validating rows, creating rule-set versions; pushing published rosters to dashboard tabs; fetching holidays</td><td>Google Sheets/Calendar, API (internal)</td><td>Single active consumer per sheet (ordering)</td></tr>
+        <tr><td class="k">AI assistant</td><td>Natural-language Q&amp;A for admins, conflict explanations, what-if runs, drafting change requests</td><td>Claude API, API (as the calling user)</td><td>ECS tasks; per-user rate limit</td></tr>
+        <tr><td class="k">Scheduled jobs</td><td>Draft next month's roster on the 20th, nightly validation sweep, nightly encrypted dump to S3, holiday refresh</td><td>API, S3</td><td>One-off ECS tasks</td></tr>
+        <tr><td class="k">Validation engine</td><td>Deterministic rule checks, independent of the solver; produces the conflict list (section 05)</td><td>In-process library used by API and scheduled jobs</td><td>Runs per edit in &lt; 50 ms for 32 × 31 cells</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 2. ENGINE ============ -->
+<section id="engine">
+  <div class="sec-head">
+    <span class="eyebrow">02 · Scheduling engine</span>
+    <h2>From rules to a verified roster</h2>
+    <p>Two paths share the same verifier: a full monthly generation, and an incremental repair when something changes after publishing. The repair path keeps the rest of the roster frozen so people's plans don't shift.</p>
+  </div>
+
+  <figure class="fig-mid">
+    <div class="scroll">
+    <svg class="diagram" viewBox="0 0 1200 400" role="img" aria-label="Roster pipeline: snapshot, expand demand, pre-check, build model, solve, verify, review and publish. Pre-check, solve and verify feed a conflict report shown at review. After publishing, a change event triggers impact analysis and a repair solve whose candidate plan re-enters verification.">
+      <defs>
+        <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+        <marker id="ahc2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahc"/></marker>
+        <marker id="ahg2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahg"/></marker>
+      </defs>
+
+      <rect x="356" y="20" width="484" height="50" rx="10" class="nc"/>
+      <text x="598" y="41" class="t" text-anchor="middle">Conflict &amp; gap report</text>
+      <text x="598" y="58" class="s" text-anchor="middle">each item names the slot, the cause and ranked fixes</text>
+
+      <text x="20" y="100" class="rl">Monthly generation</text>
+      <g>
+        <rect x="20" y="110" width="148" height="100" rx="10" class="n"/><text x="32" y="130" class="num">STEP 1</text><text x="32" y="152" class="t">Snapshot</text><text x="32" y="171" class="s">master data, rules vN,</text><text x="32" y="187" class="s">approved leaves, locks</text>
+        <rect x="188" y="110" width="148" height="100" rx="10" class="n"/><text x="200" y="130" class="num">STEP 2</text><text x="200" y="152" class="t">Expand demand</text><text x="200" y="171" class="s">brand × process × day</text><text x="200" y="187" class="s">→ required heads</text>
+        <rect x="356" y="110" width="148" height="100" rx="10" class="n"/><text x="368" y="130" class="num">STEP 3</text><text x="368" y="152" class="t">Pre-check</text><text x="368" y="171" class="s">supply vs demand per</text><text x="368" y="187" class="s">slot, before solving</text>
+        <rect x="524" y="110" width="148" height="100" rx="10" class="nb"/><text x="536" y="130" class="num">STEP 4</text><text x="536" y="152" class="t">Build model</text><text x="536" y="171" class="s">CP-SAT booleans,</text><text x="536" y="187" class="s">hard + weighted soft</text>
+        <rect x="692" y="110" width="148" height="100" rx="10" class="nb"/><text x="704" y="130" class="num">STEP 5</text><text x="704" y="152" class="t">Solve</text><text x="704" y="171" class="s">8 workers · 30 s cap,</text><text x="704" y="187" class="s">hint = last roster</text>
+        <rect x="860" y="110" width="148" height="100" rx="10" class="n"/><text x="872" y="130" class="num">STEP 6</text><text x="872" y="152" class="t">Verify</text><text x="872" y="171" class="s">independent engine</text><text x="872" y="187" class="s">re-checks every rule</text>
+        <rect x="1028" y="110" width="148" height="100" rx="10" class="n"/><text x="1040" y="130" class="num">STEP 7</text><text x="1040" y="152" class="t">Review · publish</text><text x="1040" y="171" class="s">manager approves,</text><text x="1040" y="187" class="s">Sheets + notify</text>
+      </g>
+      <line x1="168" y1="160" x2="186" y2="160" class="e" marker-end="url(#ah2)"/>
+      <line x1="336" y1="160" x2="354" y2="160" class="e" marker-end="url(#ah2)"/>
+      <line x1="504" y1="160" x2="522" y2="160" class="e" marker-end="url(#ah2)"/>
+      <line x1="672" y1="160" x2="690" y2="160" class="e" marker-end="url(#ah2)"/>
+      <line x1="840" y1="160" x2="858" y2="160" class="e" marker-end="url(#ah2)"/>
+      <line x1="1008" y1="160" x2="1026" y2="160" class="e" marker-end="url(#ah2)"/>
+
+      <line x1="430" y1="110" x2="430" y2="72" class="e ec" marker-end="url(#ahc2)"/><text x="438" y="95" class="lbl">impossible slots</text>
+      <line x1="598" y1="110" x2="598" y2="72" class="e ec" marker-end="url(#ahc2)"/><text x="606" y="95" class="lbl">slack &gt; 0</text>
+      <line x1="766" y1="110" x2="766" y2="72" class="e ec" marker-end="url(#ahc2)"/><text x="774" y="95" class="lbl">violations</text>
+      <path d="M840,45 H1102 V108" class="e ec" marker-end="url(#ahc2)"/><text x="970" y="38" class="lbl" text-anchor="middle">shown in review</text>
+
+      <text x="20" y="266" class="rl">Change handling · incremental</text>
+      <rect x="20" y="276" width="200" height="70" rx="10" class="n"/><text x="34" y="302" class="t">Change event</text><text x="34" y="321" class="s">leave approved · rule edit · swap</text>
+      <rect x="270" y="276" width="200" height="70" rx="10" class="n"/><text x="284" y="302" class="t">Impact analysis</text><text x="284" y="321" class="s">affected slots, people, brands</text>
+      <rect x="520" y="276" width="200" height="70" rx="10" class="nb"/><text x="534" y="302" class="t">Repair solve</text><text x="534" y="321" class="s">freeze the rest · minimise changes</text>
+      <line x1="220" y1="311" x2="268" y2="311" class="e" marker-end="url(#ah2)"/>
+      <line x1="470" y1="311" x2="518" y2="311" class="e" marker-end="url(#ah2)"/>
+      <path d="M720,311 H934 V212" class="e eg" marker-end="url(#ahg2)"/><text x="828" y="304" class="lbl lbl-g" text-anchor="middle">candidate plan + diff</text>
+      <path d="M1102,210 V375 H120 V348" class="e" marker-end="url(#ah2)"/><text x="610" y="379" class="lbl" text-anchor="middle">live roster after publishing</text>
+    </svg>
+    </div>
+    <figcaption><b>Figure 2.</b> Three stages can raise a conflict. The pre-check catches slots no one could ever fill (for example every assigned person is on leave). The solver's slack shows gaps it could not close. The verifier catches anything that slipped through, including manual edits. Nothing reaches step 7 without its conflict list attached.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Decision variables</h3>
+      <ul>
+        <li><code>work[e,d] ∈ {0,1}</code>: employee <i>e</i> works on day <i>d</i>.</li>
+        <li><code>cover[e,s,d] ∈ {0,1}</code>: <i>e</i> covers service line <i>s</i> (a brand × process pair) on <i>d</i>. Created only where <i>e</i> is assigned to <i>s</i> as primary or trained backup, and <i>s</i> operates on <i>d</i>.</li>
+        <li><code>slack[s,d] ∈ ℕ</code>: missing heads for <i>s</i> on <i>d</i>. Never hidden: any value above zero becomes a <span class="sev hard">C02</span> conflict.</li>
+        <li><code>off[e,d] = 1 − work[e,d]</code> on days with no leave or holiday, which counts toward weekly offs.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Objective (minimise)</h3>
+      <div class="formula">  10 000 · Σ slack[s,d]                 coverage gaps
++    500 · Σ changed[e,d]              repair mode only
++     80 · Σ backup_cover[e,s,d]       prefer primaries
++     40 · (maxSunWork − minSunWork)   fair Sundays / PH
++     20 · Σ pref_off_violated[e,d]    preferred off-days
++      5 · Σ split_offs[e,w]           keep 2 offs adjacent</div>
+      <p>Weights are stored in the <code>solver_settings</code> table, so they can be tuned without a deploy. A gap always costs more than any combination of preference violations, so <b>coverage always wins over a preferred off-day</b>, as the brief requires.</p>
+    </div>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>ID</th><th>Hard constraint (mandatory)</th><th>CP-SAT formulation</th><th>Configured in</th></tr></thead>
+      <tbody>
+        <tr><td class="k">H1</td><td>No work on approved leave, approved comp-off, or an applicable public holiday when none of the employee's lines operate</td><td><code>work[e,d] = 0</code> (fixed before solving)</td><td>Leaves, holidays, calendars</td></tr>
+        <tr><td class="k">H2</td><td>Minimum heads per service line on every operating day</td><td><code>Σₑ cover[e,s,d] + slack[s,d] ≥ req[s,d]</code></td><td>Rules sheet: calendar + min heads + date overrides</td></tr>
+        <tr><td class="k">H3</td><td>You can only cover a line on a day you work</td><td><code>cover[e,s,d] ≤ work[e,d]</code></td><td>Implicit</td></tr>
+        <tr><td class="k">H4</td><td>Daily capacity: no overlapping responsibilities beyond 100% load</td><td><code>Σₛ load[e,s] · cover[e,s,d] ≤ cap[e]</code></td><td>Assignment <code>load_pct</code>, employee <code>capacity</code></td></tr>
+        <tr><td class="k">H5</td><td>Incompatible shift windows can't be combined in one day</td><td><code>cover[e,s₁,d] + cover[e,s₂,d] ≤ 1</code> for each clashing pair</td><td>Service line <code>shift_start/end</code></td></tr>
+        <tr><td class="k">H6</td><td>Weekly offs: at least <i>k</i> per Mon–Sun week (default 1)</td><td><code>Σ_{d∈w} off[e,d] ≥ min(k, free days in w)</code></td><td>Employee <code>weekly_offs</code></td></tr>
+        <tr><td class="k">H7</td><td>No more than 6 consecutive working days, across month boundaries</td><td>Every 7-day window, using last month's tail: <code>Σ work ≤ 6</code></td><td>Employee <code>max_consecutive</code></td></tr>
+        <tr><td class="k">H8</td><td>Manually locked cells stay as the manager set them</td><td><code>work / cover</code> fixed to locked value</td><td>Roster grid lock toggle</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Single-resource vs multi-resource brands</h3>
+      <p>The model treats both the same way, with no special branch. What differs is the data:</p>
+      <ul>
+        <li><b>Single-resource brand</b> (18 of 22): one employee holds every service line of the brand at a combined load ≤ 100%. Working that day covers all of them. Their weekly off must land on a day when <i>none</i> of the brand's lines operate, or a trained backup must step in. The pre-check flags brands with 7-day lines and no backup as <span class="sev soft">at risk</span> before solving starts.</li>
+        <li><b>Multi-resource brand</b> (4 of 22): each line has its own assignees, so the solver staggers offs. For example, two people sharing CS at Urban Tandoor never take the same Sunday off when <code>min_heads = 1</code> on Sundays.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Why CP-SAT and not greedy rules</h3>
+      <ul>
+        <li>Weekly offs are coupled across brands: moving one person's off can break three lines. CP-SAT reasons over all of them together.</li>
+        <li>Hard and soft rules sit in one model with explicit priorities, and the solver reports an optimality gap.</li>
+        <li>Solution hints from the previous roster plus a <code>changed</code> penalty give stable incremental repairs.</li>
+        <li>Every run records its status, objective, optimality gap and the rule-set version it used, so any roster can be re-checked against the rules it was built under.</li>
+        <li>Size: the sample month has about 4 000 booleans and solves to proven optimal in 3–4 s on a laptop, well under the 30 s cap.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. DATA ============ -->
+<section id="data">
+  <div class="sec-head">
+    <span class="eyebrow">03 · Data model</span>
+    <h2>The service line is the unit of coverage</h2>
+    <p>Coverage is never stored per brand. It is stored per <b>service line</b> (brand × process), because CS for a brand can run 365 days while its ACC line takes Sundays off. A brand's operating calendar and a person's working schedule are separate tables, as the brief asks.</p>
+  </div>
+
+  <figure>
+    <div class="scroll">
+<pre class="mermaid">
+erDiagram
+  POD ||--o{ EMPLOYEE : groups
+  EMPLOYEE ||--o| POD : "leads (pod.lead_id)"
+  POD ||--o{ BRAND : manages
+  BRAND ||--o{ SERVICE_LINE : offers
+  PROCESS ||--o{ SERVICE_LINE : "typed as"
+  CALENDAR_RULE ||--o{ SERVICE_LINE : "operating days"
+  SERVICE_LINE ||--o{ COVERAGE_OVERRIDE : "min heads on dates"
+  RULE_SET ||--o{ SERVICE_LINE : versions
+  EMPLOYEE ||--o{ ASSIGNMENT : holds
+  SERVICE_LINE ||--o{ ASSIGNMENT : "staffed by"
+  EMPLOYEE ||--o{ LEAVE : requests
+  EMPLOYEE ||--o{ COMP_OFF_CREDIT : earns
+  EMPLOYEE ||--o{ PREFERENCE : states
+  HOLIDAY_CALENDAR ||--o{ HOLIDAY : contains
+  HOLIDAY_CALENDAR ||--o{ EMPLOYEE : "applies to"
+  ROSTER ||--o{ ROSTER_DAY : contains
+  EMPLOYEE ||--o{ ROSTER_DAY : "scheduled on"
+  ROSTER_DAY ||--o{ ROSTER_COVER : "covers lines"
+  SERVICE_LINE ||--o{ ROSTER_COVER : "covered by"
+  ROSTER ||--o{ CONFLICT : raises
+  ROSTER ||--o{ SOLVER_RUN : "produced by"
+  USER_ACCOUNT }o--|| EMPLOYEE : "is"
+  USER_ACCOUNT ||--o{ AUDIT_EVENT : performs
+
+  POD { uuid id PK
+    text name
+    uuid lead_id FK }
+  EMPLOYEE { uuid id PK
+    text code
+    text name
+    uuid pod_id FK
+    int capacity
+    int weekly_offs
+    int max_consecutive
+    uuid holiday_calendar_id FK
+    bool active }
+  BRAND { uuid id PK
+    text name
+    uuid pod_id FK
+    text tier }
+  PROCESS { uuid id PK
+    text code "CS ACC NDR RET ESC"
+    text name }
+  SERVICE_LINE { uuid id PK
+    uuid brand_id FK
+    uuid process_id FK
+    uuid calendar_rule_id FK
+    int min_heads
+    json weekday_min "Sat 3 Sun 2"
+    time shift_start
+    time shift_end
+    int rule_set_version FK }
+  CALENDAR_RULE { uuid id PK
+    text kind "ALL_DAYS NO_PH NO_SUN_PH CUSTOM"
+    int weekday_mask
+    bool works_public_holidays }
+  COVERAGE_OVERRIDE { uuid id PK
+    uuid service_line_id FK
+    date on_date
+    int min_heads
+    text reason }
+  ASSIGNMENT { uuid id PK
+    uuid employee_id FK
+    uuid service_line_id FK
+    text role "PRIMARY BACKUP"
+    int load_pct
+    date valid_from
+    date valid_to }
+  LEAVE { uuid id PK
+    uuid employee_id FK
+    date start_date
+    date end_date
+    text type "PL SL COMP_OFF"
+    text status "PENDING APPROVED CANCELLED" }
+  COMP_OFF_CREDIT { uuid id PK
+    uuid employee_id FK
+    date earned_on
+    date expires_on
+    uuid used_by_leave FK }
+  PREFERENCE { uuid id PK
+    uuid employee_id FK
+    text kind "OFF_DAY AVOID_LINE"
+    text value
+    int weight }
+  HOLIDAY_CALENDAR { uuid id PK
+    text region }
+  HOLIDAY { uuid id PK
+    uuid calendar_id FK
+    date on_date
+    text name }
+  ROSTER { uuid id PK
+    date month
+    int version
+    text status "DRAFT IN_REVIEW PUBLISHED SUPERSEDED"
+    int rule_set_version FK }
+  ROSTER_DAY { uuid id PK
+    uuid roster_id FK
+    uuid employee_id FK
+    date on_date
+    text status "WORK WEEK_OFF HOLIDAY LEAVE COMP_OFF"
+    text source "SOLVER MANUAL"
+    bool locked }
+  ROSTER_COVER { uuid roster_day_id FK
+    uuid service_line_id FK
+    bool as_backup }
+  CONFLICT { uuid id PK
+    uuid roster_id FK
+    text code
+    text severity "HARD SOFT INFO"
+    date on_date
+    uuid service_line_id FK
+    uuid employee_id FK
+    json explanation
+    text state "OPEN ACK RESOLVED" }
+  SOLVER_RUN { uuid id PK
+    uuid roster_id FK
+    text mode "FULL REPAIR"
+    text status
+    int objective
+    float gap_pct
+    int wall_ms }
+  RULE_SET { int version PK
+    text sheet_revision
+    text checksum
+    timestamptz imported_at }
+  USER_ACCOUNT { uuid id PK
+    uuid employee_id FK
+    text role
+    text scope_level "COMPANY POD BRAND PROCESS SELF"
+    uuid scope_id }
+  AUDIT_EVENT { bigint id PK
+    uuid actor_id FK
+    text entity
+    json before
+    json after
+    timestamptz at }
+</pre>
+    </div>
+    <figcaption><b>Figure 3.</b> Entity relationships. <code>ROSTER_DAY</code> records whether a person works. <code>ROSTER_COVER</code> records which lines they carry that day, so one working day can cover several brands. Rosters are versioned rather than overwritten, so any published version can be compared or restored.</figcaption>
+  </figure>
+
+  <div class="grid3">
+    <div class="panel"><h3>Calendar ≠ schedule</h3><p><code>CALENDAR_RULE</code> says when a line must be staffed. <code>ROSTER_DAY</code> says when a person works. The solver connects them through H2 and H3, and nothing assumes they match.</p></div>
+    <div class="panel"><h3>Backups are data</h3><p>A <code>BACKUP</code> assignment marks a trained, cross-brand fallback. The solver may use it at a cost (S-weight 80), and the recommender ranks backups first when it suggests fixes.</p></div>
+    <div class="panel"><h3>Everything versioned</h3><p>Rule sets carry the Sheet revision they came from. Rosters carry the rule-set version they were solved under. If the sheet changes, affected rosters are marked stale and re-validated.</p></div>
+  </div>
+</section>
+
+<!-- ============ 4. CHANGE ============ -->
+<section id="change">
+  <div class="sec-head">
+    <span class="eyebrow">04 · Handling changes</span>
+    <h2>A sole owner goes on leave after publishing</h2>
+    <p>Worked example from the sample data. Meera Iyer runs all three lines of Kesar Kitchen alone. Kesar Kitchen's CS runs 365 days. Her leave for Sunday 13 Dec is approved after the December roster is published.</p>
+  </div>
+
+  <figure>
+    <div class="scroll">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor PL as Pod Lead
+  participant API as API service
+  participant VAL as Validation engine
+  participant REC as Backup recommender
+  participant Q as Redis (solve stream)
+  participant SOL as Solver worker
+  participant AI as AI assistant
+  actor OM as Ops Manager
+  participant GS as Google Sheets
+  PL->>API: approve leave (Meera, 13 Dec)
+  API->>VAL: re-validate affected cells only
+  VAL-->>API: C01 NO_COVERAGE Kesar Kitchen CS, ACC, NDR on 13 Dec
+  API->>REC: rank candidates for the 3 open slots
+  REC-->>API: Arjun (backup, same pod), Divya (partial), Rahul (rejected: H7)
+  API->>Q: enqueue repair (window 7–20 Dec, freeze others)
+  Q->>SOL: solve with min-change objective
+  SOL-->>API: plan: Arjun covers 13 Dec, his off moves to 14 Dec (2 cells changed)
+  API->>VAL: verify candidate plan
+  VAL-->>API: 0 hard, 1 soft (Arjun preferred Sunday off)
+  API-->>OM: WebSocket: proposal with diff and conflicts
+  OM->>AI: why Arjun and not Divya?
+  AI->>API: tool explain_slot + suggest_backups
+  AI-->>OM: Divya is at 60% load on Nimbu Naturals; Kesar needs 50%, over capacity
+  OM->>API: approve proposal
+  API->>API: roster v3 published, audit event written
+  API->>GS: push updated tabs (Company, Pod South, Kesar Kitchen)
+  API-->>PL: notify Arjun and Pod Lead
+</pre>
+    </div>
+    <figcaption><b>Figure 4.</b> The change touches only a 14-day window around the gap. Two cells change instead of the whole month being regenerated. The manager approves the proposal; the system never publishes on its own.</figcaption>
+  </figure>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Candidate</th><th>Relationship to Kesar Kitchen</th><th>State on Sun 13 Dec</th><th>Cost</th><th>Verdict</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Arjun Rao</td><td>Trained backup on all 3 lines, same pod</td><td>Weekly off (preferred). His own brand Loom &amp; Lark is closed on Sundays, so he has full capacity</td><td>80 backup + 20 preference + 1 000 for 2 changed cells</td><td><span class="sev ok">Recommended</span></td></tr>
+        <tr><td class="k">Divya Nair</td><td>Backup on CS only, same pod</td><td>Working Nimbu Naturals at 60% load; adding Kesar CS (50%) breaks H4</td><td>—</td><td><span class="sev soft">Partial: CS only if Nimbu ACC is swapped</span></td></tr>
+        <tr><td class="k">Rahul Menon</td><td>Backup on CS, pod North</td><td>13 Dec would be his 7th consecutive working day</td><td>—</td><td><span class="sev hard">Rejected: H7</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="callout"><b>Three-person brands.</b> If one of the three Urban Tandoor employees becomes unavailable, impact analysis re-evaluates H2 for each of the brand's lines using only the remaining two. If they can still meet <code>min_heads</code> (for example by swapping an off-day), the repair stays inside the brand. If not, the gap is flagged and backups from other brands are offered.</p>
+</section>
+
+<!-- ============ 5. CONFLICTS ============ -->
+<section id="conflicts">
+  <div class="sec-head">
+    <span class="eyebrow">05 · Conflict catalogue</span>
+    <h2>What the validator reports</h2>
+    <p>Every conflict carries a code, severity, slot, the people involved, and a structured explanation that the UI and the AI assistant both read. A roster can't be published while any hard conflict is open, unless an Ops Manager acknowledges it with a written reason.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Code</th><th>Severity</th><th>Raised when</th><th>Suggested resolution</th></tr></thead>
+      <tbody>
+        <tr><td class="k mono">C01 NO_COVERAGE</td><td><span class="sev hard">HARD</span></td><td>A line operates on a day and none of its assignees are available</td><td>Ranked backups; swap an off-day; request a coverage override</td></tr>
+        <tr><td class="k mono">C02 UNDERSTAFFED</td><td><span class="sev hard">HARD</span></td><td>Heads on a line are below <code>min_heads</code> for that day (solver slack &gt; 0)</td><td>Shift an off-day within the week; borrow a backup</td></tr>
+        <tr><td class="k mono">C03 OVER_ALLOCATED</td><td><span class="sev hard">HARD</span></td><td>Combined load of a person's covered lines exceeds capacity (H4)</td><td>Move one line to a co-assignee or backup</td></tr>
+        <tr><td class="k mono">C04 SHIFT_CLASH</td><td><span class="sev hard">HARD</span></td><td>Two lines with overlapping shift windows assigned to one person (H5)</td><td>Reassign one line for that day</td></tr>
+        <tr><td class="k mono">C05 LEAVE_CONFLICT</td><td><span class="sev hard">HARD</span></td><td>A manual edit schedules someone on approved leave, comp-off or a non-working holiday</td><td>Revert the edit or cancel the leave through the leave flow</td></tr>
+        <tr><td class="k mono">C06 NO_WEEKLY_OFF</td><td><span class="sev hard">HARD</span></td><td>A week has fewer offs than required (H6)</td><td>Suggest the lowest-impact day for an off</td></tr>
+        <tr><td class="k mono">C07 STREAK</td><td><span class="sev hard">HARD</span></td><td>More than <code>max_consecutive</code> working days, including across months (H7)</td><td>Insert an off; repair the window</td></tr>
+        <tr><td class="k mono">C08 CASCADE_GAP</td><td><span class="sev hard">HARD</span></td><td>One person's change opens gaps in two or more brands (an aggregate of C01/C02)</td><td>Repair solve across all affected brands together</td></tr>
+        <tr><td class="k mono">C09 PREFERENCE</td><td><span class="sev soft">SOFT</span></td><td>A preferred off-day or avoided line was overridden for coverage</td><td>Informational; fairness tracked monthly</td></tr>
+        <tr><td class="k mono">C10 BACKUP_USED</td><td><span class="sev info">INFO</span></td><td>A backup covers a line instead of its primary</td><td>None needed; visible to the pod lead</td></tr>
+        <tr><td class="k mono">C11 RULE_IMPORT</td><td><span class="sev soft">SOFT</span></td><td>A rules-sheet row fails validation (unknown brand, min heads &lt; 0, bad date)</td><td>Fix the row in the Sheet; previous rule set stays active</td></tr>
+        <tr><td class="k mono">C12 STALE_ROSTER</td><td><span class="sev soft">SOFT</span></td><td>The roster was solved under an older rule-set version</td><td>Re-validate; run repair if new gaps appear</td></tr>
+        <tr><td class="k mono">C13 NOT_ASSIGNED</td><td><span class="sev hard">HARD</span></td><td>A manual edit has someone covering a line they aren't trained on</td><td>Add an assignment first, or pick a trained person</td></tr>
+        <tr><td class="k mono">C14 NO_BACKUP</td><td><span class="sev soft">SOFT</span></td><td>A line runs every day but only one person is trained on it</td><td>Train a backup before weekly offs start opening gaps</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 6. SHEETS ============ -->
+<section id="sheets">
+  <div class="sec-head">
+    <span class="eyebrow">06 · Google Sheets integration</span>
+    <h2>Rules come in, rosters go out</h2>
+    <p>The ops team keeps working rules and minimum coverage in a Google Sheet they already know how to edit. The app pulls it, validates it and versions it. Published rosters are pushed to a separate dashboard workbook that mirrors the app's views. In the demo, a <code>sheets-mock</code> container serves the same API with seeded data.</p>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>brand</th><th>process</th><th>calendar</th><th>min_heads</th><th>weekday_min</th><th>shift</th><th>effective_from</th></tr></thead>
+      <tbody>
+        <tr><td>Kesar Kitchen</td><td>CS</td><td class="mono">ALL_DAYS</td><td>1</td><td>—</td><td>09:00–18:00</td><td>2026-12-01</td></tr>
+        <tr><td>Kesar Kitchen</td><td>ACC</td><td class="mono">NO_SUN_PH</td><td>1</td><td>—</td><td>10:00–19:00</td><td>2026-12-01</td></tr>
+        <tr><td>Kesar Kitchen</td><td>NDR</td><td class="mono">NO_PH</td><td>1</td><td>—</td><td>10:00–19:00</td><td>2026-12-01</td></tr>
+        <tr><td>Urban Tandoor</td><td>CS</td><td class="mono">ALL_DAYS</td><td>1</td><td>Sat:2</td><td>09:00–18:00</td><td>2026-12-01</td></tr>
+        <tr><td>Urban Tandoor</td><td>NDR</td><td class="mono">NO_SUN_PH</td><td>1</td><td>—</td><td>12:00–21:00</td><td>2026-12-01</td></tr>
+        <tr><td>Loom &amp; Lark</td><td>CS</td><td class="mono">NO_SUN_PH</td><td>1</td><td>—</td><td>09:30–18:30</td><td>2026-12-01</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="color:var(--ink-2);font-size:13.5px">Example rows from the <b>Service lines</b> tab. Other tabs: <b>Coverage overrides</b> (date-specific minimums, such as a sale day), <b>Calendars</b> (custom weekday masks) and <b>Solver weights</b>.</p>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Inbound: rules (pull)</h3>
+      <ol>
+        <li>Drive Changes API is polled every 60 s; the sheet's <code>revisionId</code> is compared with the last import.</li>
+        <li>Rows are parsed into Pydantic models; failures become <span class="sev soft">C11</span> rows with cell references.</li>
+        <li>The diff against the active rule set is shown to an admin. On accept, rule set <i>vN+1</i> is written in one transaction.</li>
+        <li>Rosters solved under <i>vN</i> are marked stale and re-validated, and new gaps are flagged.</li>
+      </ol>
+    </div>
+    <div class="panel">
+      <h3>Outbound: dashboards (push)</h3>
+      <ul>
+        <li>On publish, and on each validated edit (debounced 30 s), the worker writes tabs: <b>Company</b>, one per <b>Pod</b>, one per multi-person <b>Brand</b>, <b>Coverage heatmap</b>, <b>Open conflicts</b>.</li>
+        <li>One <code>batchUpdate</code> per tab; protected ranges keep the mirror read-only.</li>
+        <li>Idempotency key = roster id + version, so retries never duplicate rows.</li>
+        <li>The database is the source of truth for rosters. The Sheet is the source of truth only for rules.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7. BACKUP ============ -->
+<section id="backup">
+  <div class="sec-head">
+    <span class="eyebrow">07 · Replication &amp; backups</span>
+    <h2>Always-synced replica, continuous local backup</h2>
+    <p>Each copy has one purpose. The standby keeps the system up, the read replica keeps views fast, the office replica and NAS give an off-cloud copy, and S3 enables point-in-time recovery.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Copy</th><th>Mechanism</th><th>Frequency</th><th>RPO</th><th>RTO</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Multi-AZ standby</td><td>Synchronous physical replication</td><td>Every commit</td><td>0</td><td>~60 s, automatic</td><td>Availability</td></tr>
+        <tr><td class="k">Read replica</td><td>Async streaming replication</td><td>Continuous, lag &lt; 1 s</td><td>n/a</td><td>~5 min (manual promote)</td><td>Read scaling for views</td></tr>
+        <tr><td class="k">S3 point-in-time</td><td>RDS snapshots + WAL archive</td><td>Daily snapshot, WAL every 5 min</td><td>≤ 5 min</td><td>~30 min</td><td>Undo bad writes, 35-day window</td></tr>
+        <tr><td class="k">Office replica</td><td>Postgres logical replication over IPsec VPN</td><td>Continuous</td><td>Seconds</td><td>Read-only; promote in DR</td><td>Local copy, survives cloud outage</td></tr>
+        <tr><td class="k">Office NAS</td><td>restic pulls encrypted <code>pg_dump</code> from S3</td><td>Every 15 min incremental + nightly full</td><td>≤ 15 min</td><td>~1 h</td><td>Offline, versioned, ransomware-resistant</td></tr>
+        <tr><td class="k">Local dev (docker)</td><td><code>db-replica</code> streaming standby; WAL archive + 15-min <code>pg_dump</code> to <code>./backups</code></td><td>Continuous WAL archive</td><td>Seconds</td><td>Minutes</td><td>Same pattern demonstrated locally</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="callout"><b>Restore drill.</b> A monthly scheduled job restores the latest NAS dump into a scratch container, runs the validator over the current month's roster and records the result in the audit log. A backup that has never been restored doesn't count.</p>
+</section>
+
+<!-- ============ 8. ROLES ============ -->
+<section id="roles">
+  <div class="sec-head">
+    <span class="eyebrow">08 · Roles &amp; access levels</span>
+    <h2>Roles follow the schedule's levels</h2>
+    <p>The schedule has five levels: company, pod, brand, process and self. Each user account carries a role and a scope <code>(level, id)</code>. The API resolves the scope on every request, and PostgreSQL row-level security applies the same filter again in the database.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Role</th><th>Level</th><th>Sees</th><th>Can change</th><th>Approves / publishes</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Super Admin</td><td>Company</td><td>Everything, incl. audit log and backups</td><td>Users, roles, rule-set import, solver weights, master data</td><td>Publish, roll back a version</td></tr>
+        <tr><td class="k">Ops Manager</td><td>Company</td><td>All rosters, conflicts, coverage</td><td>Assignments, leaves, roster cells, locks, backups</td><td>Generate, approve repairs, publish</td></tr>
+        <tr><td class="k">Pod Lead</td><td>Pod</td><td>Their pod's people and brands, plus cross-pod backups used on them</td><td>Approve leave, propose swaps within the pod (validated)</td><td>Sign off their pod's section before publish</td></tr>
+        <tr><td class="k">Brand Owner</td><td>Brand or process</td><td>Daily coverage of their brand / process across pods</td><td>Request coverage overrides (go to Ops for approval)</td><td>—</td></tr>
+        <tr><td class="k">Employee</td><td>Self</td><td>Own schedule; who covers their brands on their off-days</td><td>Leave requests, off-day preferences, swap requests</td><td>—</td></tr>
+        <tr><td class="k">Auditor</td><td>Company (read)</td><td>Everything, read-only, incl. change history</td><td>—</td><td>—</td></tr>
+        <tr><td class="k">AI assistant</td><td>Inherits the caller</td><td>Only what the calling user can see</td><td>Drafts change requests only</td><td>Never</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 9. SECURITY ============ -->
+<section id="security">
+  <div class="sec-head">
+    <span class="eyebrow">09 · Security</span>
+    <h2>Controls by layer</h2>
+  </div>
+  <div class="grid3">
+    <div class="panel"><h3>Identity</h3><ul><li>Cognito user pool; MFA required for Admin and Ops roles</li><li>15-min access tokens, rotating refresh tokens</li><li>Role and scope in token claims, re-checked against DB per request</li></ul></div>
+    <div class="panel"><h3>Network</h3><ul><li>DB and Redis in isolated subnets, no internet route</li><li>Security groups allow only API → DB, workers → Redis</li><li>WAF managed rules + per-IP rate limit at CloudFront</li><li>Egress to Google and Anthropic through NAT only</li></ul></div>
+    <div class="panel"><h3>Data</h3><ul><li>KMS encryption at rest for RDS, S3, Redis, backups</li><li>TLS 1.2+ on every hop, including DB connections</li><li>Phone / personal email encrypted at column level (pgcrypto)</li><li>Row-level security mirrors the RBAC scope</li></ul></div>
+    <div class="panel"><h3>Secrets &amp; keys</h3><ul><li>Secrets Manager with rotation; nothing in images or env files</li><li>Google access through Workload Identity Federation from the AWS task role, so no long-lived service-account key</li><li>NAS backups encrypted with a key held offline</li></ul></div>
+    <div class="panel"><h3>AI data handling</h3><ul><li>Assistant receives employee IDs, first names and schedule facts only, never contact data</li><li>Tool calls run with the caller's scope</li><li>Prompts, tool calls and outputs written to the audit log</li></ul></div>
+    <div class="panel"><h3>Supply chain &amp; audit</h3><ul><li>Pinned base images, non-root containers, read-only root FS</li><li>ECR scan on push; CI blocks critical CVEs</li><li>Append-only <code>audit_event</code> + CloudTrail; S3 Object Lock on backups</li></ul></div>
+  </div>
+</section>
+
+<!-- ============ 10. AI ============ -->
+<section id="ai">
+  <div class="sec-head">
+    <span class="eyebrow">10 · AI admin assistant</span>
+    <h2>Explains and proposes, never publishes</h2>
+    <p>A Claude-powered chat panel for Ops Managers and Admins. It answers questions like "who covers Urban Tandoor CS on the 25th?" and "why is Kesar Kitchen red on Sunday?", and it can try what-if changes in a sandbox. Every action it takes goes through the same API, permissions and validator as a human edit.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Tool</th><th>Type</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td class="k mono">get_coverage(scope, from, to)</td><td><span class="sev info">READ</span></td><td>Heads vs required per line and day for a pod, brand or process</td></tr>
+        <tr><td class="k mono">list_conflicts(roster, severity)</td><td><span class="sev info">READ</span></td><td>Open conflicts with structured explanations</td></tr>
+        <tr><td class="k mono">explain_slot(line, date)</td><td><span class="sev info">READ</span></td><td>Who is assigned and why each person is or isn't available (leave, H4 load, H7 streak…)</td></tr>
+        <tr><td class="k mono">suggest_backups(line, date)</td><td><span class="sev info">READ</span></td><td>Ranked candidates from the backup recommender, with cost and violated rules</td></tr>
+        <tr><td class="k mono">what_if(changes[])</td><td><span class="sev soft">SANDBOX</span></td><td>Runs a repair solve on a copy; returns diff, new conflicts and objective change</td></tr>
+        <tr><td class="k mono">draft_change_request(changes[], reason)</td><td><span class="sev soft">PROPOSAL</span></td><td>Creates a pending change for a human to approve or reject</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="callout"><b>Not exposed to the assistant:</b> publish, delete, master-data edits, user administration and rule-set import. Model: <code>claude-opus-5-5</code> via the Messages API with tool use and server-side refusal fallbacks, hosted inside the API service so the tools run with the caller's permissions. If the API is unavailable, the conflict panel still shows the validator's own templated explanations.</p>
+</section>
+
+<!-- ============ 11. DOCKER ============ -->
+<section id="docker">
+  <div class="sec-head">
+    <span class="eyebrow">11 · Docker &amp; deployment</span>
+    <h2>One compose file, two deployment profiles</h2>
+    <p>Python services share one image with different commands, so the solver, API and workers always run identical domain code. Sheets sync and the AI assistant run inside the API service in this build; Figure 1 shows them split out as they would be at larger scale.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Compose service</th><th>Image / command</th><th>Role</th><th>AWS equivalent</th></tr></thead>
+      <tbody>
+        <tr><td class="k mono">web</td><td>nginx:1.27-alpine serving the Vite build</td><td>React SPA</td><td>S3 + CloudFront</td></tr>
+        <tr><td class="k mono">api</td><td>rosteros-py · <code>uvicorn app.main:app</code></td><td>REST + WebSocket</td><td>ECS service behind ALB</td></tr>
+        <tr><td class="k mono">solver ×2</td><td>rosteros-py · <code>rq worker solve</code> (no DB credentials)</td><td>CP-SAT jobs</td><td>ECS service, compute-optimised</td></tr>
+        <tr><td class="k mono">scheduler</td><td>rosteros-py · <code>python -m app.scheduler</code></td><td>Sheet polling every 10 min, nightly validation, monthly draft on the 20th</td><td>EventBridge Scheduler → ECS task</td></tr>
+        <tr><td class="k mono">db</td><td>postgres:16 (primary, <code>wal_level=logical</code>)</td><td>System of record</td><td>RDS PostgreSQL Multi-AZ</td></tr>
+        <tr><td class="k mono">db-replica</td><td>postgres:16 streaming standby</td><td>Auto-synced replica</td><td>RDS read replica</td></tr>
+        <tr><td class="k mono">redis</td><td>redis:7-alpine</td><td>Streams, cache, pub/sub</td><td>ElastiCache</td></tr>
+        <tr><td class="k mono">sheets-mock</td><td>rosteros-py · <code>uvicorn mocks.sheets:app</code></td><td>Simulated Google Sheets / Calendar</td><td>Real Google APIs</td></tr>
+        <tr><td class="k mono">backup</td><td>postgres:16 · <code>pg_dump</code> every 15 min → <code>./backups</code> (primary also archives WAL there)</td><td>Continuous local backup</td><td>S3 PITR + office NAS</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <h3>Demo profile (for the assessment URL)</h3>
+      <p>One EC2 <code>t3.medium</code> running the compose stack behind Caddy for automatic HTTPS. Sheets mock or a real sheet via env flag. Roughly $30/month, and it can be switched off after review.</p>
+    </div>
+    <div class="panel">
+      <h3>Production profile (Figure 1)</h3>
+      <p>Same images pushed to ECR by GitHub Actions and deployed to ECS Fargate with Terraform. RDS, ElastiCache, CloudFront, Cognito and the VPN are managed services. Blue/green deploys through ECS.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 12. ASSUMPTIONS ============ -->
+<section id="assumptions">
+  <div class="sec-head">
+    <span class="eyebrow">12 · Assumptions</span>
+    <h2>Documented and configurable</h2>
+    <p>The brief leaves these open. Each one is a setting or a table row, not code.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Topic</th><th>Assumption</th><th>Where to change it</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Granularity</td><td>Day-level roster, one shift per person per day; shift windows are used only for clash checks</td><td>Service line shift times</td></tr>
+        <tr><td class="k">Weekly offs</td><td>1 per Mon–Sun week by default; leave days don't count as weekly offs. A week split across two months owes only the offs that can't fall in the other month (Mon 28–Thu 31 Dec may take its off on Sun 3 Jan); the streak limit covers the boundary</td><td>Employee <code>weekly_offs</code></td></tr>
+        <tr><td class="k">Streaks</td><td>Max 6 consecutive working days, checked across month boundaries</td><td>Employee <code>max_consecutive</code></td></tr>
+        <tr><td class="k">Public holidays</td><td>Indian national list from Google Calendar, plus regional calendars per employee location</td><td>Holiday calendars</td></tr>
+        <tr><td class="k">Comp-offs</td><td>Working a public holiday on a 365-day line earns 1 credit, valid 30 days; an approved comp-off is a hard day off</td><td><code>comp_off_validity_days</code></td></tr>
+        <tr><td class="k">Leave</td><td>Only approved leave is a hard constraint; pending leave is shown as a risk overlay</td><td>Leave status</td></tr>
+        <tr><td class="k">Coverage unit</td><td>Heads per service line; a single-brand owner covers all their lines on a working day</td><td>Assignment <code>load_pct</code></td></tr>
+        <tr><td class="k">Time zone</td><td>All dates in IST (Asia/Kolkata)</td><td>Org setting</td></tr>
+        <tr><td class="k">Sources of truth</td><td>Sheets for rules and coverage; Postgres for everything else; Sheets roster tabs are a read-only mirror</td><td>Sync settings</td></tr>
+        <tr><td class="k">Sample data</td><td>32 employees, 4 pods, 22 brands (18 single-resource ≈ 82%, 2 with two people, 2 with three); processes CS, ACC, NDR, Retention, Escalations</td><td>Seed script / Sheets mock</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 13. PLAN ============ -->
+<section id="plan">
+  <div class="sec-head">
+    <span class="eyebrow">13 · Build plan</span>
+    <h2>Four days, engine first</h2>
+    <p>The brief weights reliable scheduling over interface polish, so the solver and validator are built and tested before any views.</p>
+  </div>
+  <ol class="steps">
+    <li><span class="eyebrow">Day 1</span><b>Data &amp; rules</b>Schema and migrations, seed dataset, Sheets mock and rule import with C11 validation, validation engine with unit tests per constraint.</li>
+    <li><span class="eyebrow">Day 2</span><b>Engine</b>Pre-check, CP-SAT model (H1–H8, soft weights), slack-to-conflict explanations, repair mode, backup recommender.</li>
+    <li><span class="eyebrow">Day 3</span><b>Views &amp; changes</b>Company, pod, brand, process and employee views; editable grid with live validation; conflict panel; Sheets push; AI assistant tools.</li>
+    <li><span class="eyebrow">Day 4</span><b>Ship</b>Docker compose with replica and backup, demo deploy, README answers to the eight questions, demo video.</li>
+  </ol>
+</section>
+
+</div>

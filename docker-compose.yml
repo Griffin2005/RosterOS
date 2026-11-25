@@ -1,0 +1,121 @@
+# Local / demo stack. Mirrors the AWS layout in docs/architecture.html (section 11).
+#   docker compose up --build      ->  http://localhost:8080
+name: rosteros
+
+x-app: &app
+  image: rosteros-backend:local     # built once by `api`, reused by the other services
+  pull_policy: never
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    REPLICA_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-replica:5432/${POSTGRES_DB}
+    REDIS_URL: redis://redis:6379/0
+    SHEETS_MODE: http
+    SHEETS_BASE_URL: http://sheets-mock:8100
+  restart: unless-stopped
+
+services:
+  web:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+      sheets-mock: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  solver:
+    <<: *app
+    command: rq worker solve --url redis://redis:6379/0
+    environment:
+      REDIS_URL: redis://redis:6379/0   # pure worker: no database credentials
+    env_file: []
+    depends_on: [redis]
+    deploy: { replicas: 2 }
+
+  scheduler:
+    <<: *app
+    command: python -m app.scheduler
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      SHEETS_MODE: http
+      SHEETS_BASE_URL: http://sheets-mock:8100
+      AUTO_SEED: "0"
+    depends_on:
+      api: { condition: service_healthy }
+
+  sheets-mock:
+    image: rosteros-backend:local
+    pull_policy: never
+    command: uvicorn mocks.sheets:app --host 0.0.0.0 --port 8100
+    ports: ["8100:8100"]
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD}
+    command: >
+      postgres -c wal_level=logical -c max_wal_senders=10 -c hot_standby=on
+               -c archive_mode=on -c archive_command='test ! -f /backups/wal/%f && cp %p /backups/wal/%f'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+      - ./infra/postgres/primary-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  db-replica:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD}
+    entrypoint: ["bash", "/replica-entrypoint.sh"]
+    volumes:
+      - pgreplica:/var/lib/postgresql/data
+      - ./infra/postgres/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+
+  backup:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    entrypoint: ["bash", "/backup-loop.sh"]
+    volumes:
+      - ./backups:/backups
+      - ./infra/postgres/backup-loop.sh:/backup-loop.sh:ro
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  pgreplica:
