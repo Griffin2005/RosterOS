@@ -1,8 +1,9 @@
-import { Fragment, useMemo, useState } from "react";
+import { createContext, Fragment, useContext, useMemo, useState } from "react";
 import { canEditRoster, fmtDay, STATUS_LABEL, STATUS_SHORT, WD, weekday, type CoverageRow, type EmployeeRow, type Grid } from "../api";
 import { useApp } from "../ctx";
 import { RosterActions } from "../components/RosterActions";
 import { CellEditor } from "../components/CellEditor";
+import { Drawer } from "../components/Modal";
 
 type View = "company" | "pod" | "brand" | "process" | "employee";
 
@@ -14,6 +15,7 @@ export default function RosterPage() {
   const [proc, setProc] = useState<string>("");
   const [empId, setEmpId] = useState<string>(user?.employee_id || "");
   const [editing, setEditing] = useState<{ emp: EmployeeRow; idx: number } | null>(null);
+  const [day, setDay] = useState<number | null>(null);
 
   if (!grid) return (<><Head /><div className="card empty">{gridLoading ? <span className="spinner" /> : <p>No roster for this month yet.</p>}</div></>);
 
@@ -30,7 +32,7 @@ export default function RosterPage() {
   const onCell = canEditRoster(user) ? (e: EmployeeRow, idx: number) => setEditing({ emp: e, idx }) : undefined;
 
   return (
-    <>
+    <DayCtx.Provider value={setDay}>
       <Head />
       <div className="actions" style={{ justifyContent: "space-between" }}>
         <div className="seg" role="tablist">
@@ -74,14 +76,16 @@ export default function RosterPage() {
       {view === "employee" && emp && <EmployeeCalendar grid={grid} emp={emp} onCell={onCell} />}
 
       {editing && <CellEditor emp={editing.emp} dayIdx={editing.idx} onClose={() => setEditing(null)} />}
-    </>
+      {day !== null && <DayDrawer grid={grid} idx={day} onClose={() => setDay(null)}
+                                  onPrev={() => setDay(Math.max(0, day - 1))} onNext={() => setDay(Math.min(grid.days.length - 1, day + 1))} />}
+    </DayCtx.Provider>
   );
 }
 
 function Head() {
   return (
     <div className="page-head">
-      <div><h1>Roster</h1><p>Company, pod, brand, process and employee views of the same month. Click a cell to edit it; every edit is validated.</p></div>
+      <div><h1>Roster</h1><p>Company, pod, brand, process and employee views of the same month. Click a date for that day's coverage, or a cell to edit it; every edit is validated.</p></div>
       <RosterActions />
     </div>
   );
@@ -106,10 +110,57 @@ interface Group { title: string; emps?: EmployeeRow[]; lines?: CoverageRow[] }
 
 function DayHeads({ grid }: { grid: Grid }) {
   const hol = new Set(grid.holidays);
-  return (<>{grid.days.map((d) => {
+  const open = useContext(DayCtx);
+  return (<>{grid.days.map((d, i) => {
     const wd = weekday(d);
-    return <th key={d} className={hol.has(d) ? "ph" : wd >= 5 ? "we" : ""} title={hol.has(d) ? "Public holiday" : ""}>{WD[wd].slice(0, 2)}<span className="d">{d.slice(8)}</span></th>;
+    return (
+      <th key={d} className={hol.has(d) ? "ph" : wd >= 5 ? "we" : ""}>
+        <button className="day-btn" onClick={() => open(i)} title={`${hol.has(d) ? "Public holiday · " : ""}Who's on ${fmtDay(d)}`} aria-label={`Who's working on ${fmtDay(d)}`}>
+          {WD[wd].slice(0, 2)}<span className="d">{d.slice(8)}</span>
+        </button>
+      </th>
+    );
   })}</>);
+}
+
+const DayCtx = createContext<(i: number) => void>(() => {});
+
+/** One day at a glance: every line's coverage, who's on it, and who's away. */
+function DayDrawer({ grid, idx, onClose, onPrev, onNext }: { grid: Grid; idx: number; onClose: () => void; onPrev: () => void; onNext: () => void }) {
+  const { openConflict } = useApp();
+  const day = grid.days[idx];
+  const names = Object.fromEntries(grid.employees.map((e) => [e.id, e.name]));
+  const lines = grid.coverage.map((c) => ({ c, d: c.days[idx] })).filter((x) => x.d.req > 0)
+    .sort((a, b) => (a.d.heads.length - a.d.req) - (b.d.heads.length - b.d.req) || a.c.label.localeCompare(b.c.label));
+  const short = lines.filter((x) => x.d.heads.length < x.d.req);
+  const closed = grid.coverage.filter((c) => c.days[idx].req === 0).length;
+  const away = grid.employees.filter((e) => e.cells[idx] && e.cells[idx]!.status !== "WORK");
+  const conflictFor = (lineId: string) => grid.conflicts.find((c) => c.line_id === lineId && c.date === day && c.severity === "HARD");
+  return (
+    <Drawer title={<div><h2>{fmtDay(day)}</h2><span className="subtle">{lines.length} lines open · {closed} closed · {short.length} short</span></div>} onClose={onClose}>
+      <div className="actions">
+        <button className="btn sm ghost" onClick={onPrev} disabled={idx === 0}>← Previous day</button>
+        <button className="btn sm ghost" onClick={onNext} disabled={idx === grid.days.length - 1}>Next day →</button>
+      </div>
+      {short.length === 0 ? <div className="alert ok">Every open line has its required heads.</div>
+        : <div className="alert err">{short.length} line{short.length > 1 ? "s are" : " is"} below the required heads.</div>}
+      <div className="list">
+        {lines.map(({ c, d }) => {
+          const conf = conflictFor(c.line_id);
+          const ok = d.heads.length >= d.req;
+          const body = (<>
+            <span className={`cov ${d.heads.length === 0 ? "none" : ok ? "ok" : "short"}`} style={{ margin: 0 }}>{d.heads.length}/{d.req}</span>
+            <div className="grow"><b>{c.label}</b><small>{d.heads.map((h) => names[h] ?? "someone outside your scope").join(", ") || "Nobody available"}{conf ? (conf.acknowledged ? " · acknowledged, open for details" : " · open for the fix") : ""}</small></div>
+          </>);
+          return conf
+            ? <button key={c.line_id} className="list-item" style={{ border: 0, background: "none", textAlign: "left", width: "100%" }} onClick={() => openConflict(conf)}>{body}</button>
+            : <div key={c.line_id} className="list-item">{body}</div>;
+        })}
+      </div>
+      <h3>Away ({away.length})</h3>
+      <div className="chips">{away.map((e) => <span key={e.id} className="chip">{e.name} · {STATUS_LABEL[e.cells[idx]!.status].toLowerCase()}</span>)}</div>
+    </Drawer>
+  );
 }
 
 function EmployeeGrid({ grid, groups, onCell }: { grid: Grid; groups: Group[]; onCell?: (e: EmployeeRow, i: number) => void }) {

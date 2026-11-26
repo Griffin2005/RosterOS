@@ -31,7 +31,10 @@ ENV STATIC_DIR=/srv/static \
 
 # Seed at build time (rules import, holidays, December solve + publish) so a
 # cold start on a small instance serves immediately instead of re-solving.
+# Accounts are created WITHOUT passwords here: secrets never enter an image
+# layer. app/bootstrap.py sets them from ADMIN_PASSWORD / DEMO_PASSWORD when
+# the container starts.
 RUN python -m app.seed
 
 EXPOSE 10000
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --proxy-headers --forwarded-allow-ips='*' --no-server-header"]

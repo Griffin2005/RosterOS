@@ -1,14 +1,21 @@
 """AI admin assistant: explains conflicts and proposes fixes, never publishes.
 
 A Messages API tool loop hosted inside the API service: every tool runs with
-the caller's permissions against the same services a human uses, and the
-roster data never leaves our infrastructure except as the minimal facts the
-model needs (IDs, first names, schedule facts; no contact data).
+the caller's permissions against the same services a human uses.
+
+Privacy: the model never sees an employee's name. Names in the user's
+messages and in every tool result are replaced with employee codes (E12)
+before the request leaves our infrastructure, and codes in the model's reply
+are turned back into names only for the person reading it. Only schedule
+facts (codes, brands, dates, statuses) are sent; no contact data exists to
+send. Each request is rate limited per user and audited without its content.
 Without ANTHROPIC_API_KEY it degrades to the validator's templated explanations.
 """
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from datetime import date, timedelta
 from typing import Any
 
@@ -26,6 +33,7 @@ from ..domain.solver import solve
 from ..domain.types import Status
 from ..domain.validator import heads_on, summarize, validate, why_unavailable
 from ..services import rosters as R
+from ..security import limiter
 from ..services.audit import audit
 from ..services.snapshot import build_problem, roster_plan
 from .scope import filter_grid
@@ -42,7 +50,30 @@ preferences are soft and yield to coverage.
 
 You can explain, compare options and run what-if checks. You can also draft a change, which creates an unpublished \
 draft roster for a human to review. You cannot publish, delete, or change master data; if asked, say a manager does \
-that in the app. Keep answers short and concrete: name the people, dates and lines, and say what each option costs."""
+that in the app. Keep answers short and concrete: name the people, dates and lines, and say what each option costs.
+
+For privacy, employees appear only as codes such as E12, in questions and in tool results. Refer to people by their \
+code exactly as written (the app shows the reader the real name) and pass codes to tools that take a name."""
+
+
+class Pseudonymiser:
+    """Swaps employee names for codes on the way to the model and back."""
+
+    def __init__(self, employees):
+        self.names = sorted(((e.name, e.code) for e in employees), key=lambda t: -len(t[0]))
+        firsts = Counter(e.name.split()[0].lower() for e in employees)
+        self.first = {e.name.split()[0]: e.code for e in employees if firsts[e.name.split()[0].lower()] == 1}
+        self.code_name = {e.code: e.name for e in employees}
+
+    def mask(self, text: str) -> str:
+        for name, code in self.names:
+            text = re.sub(re.escape(name), code, text, flags=re.IGNORECASE)
+        for first, code in self.first.items():
+            text = re.sub(rf"\b{re.escape(first)}\b", code, text, flags=re.IGNORECASE)
+        return text
+
+    def unmask(self, text: str) -> str:
+        return re.sub(r"\b(E\d{2,5})\b", lambda m: self.code_name.get(m.group(1), m.group(1)), text)
 
 TOOLS: list[dict[str, Any]] = [
     {"name": "list_conflicts", "strict": True,
@@ -90,16 +121,21 @@ class Ctx:
 
     def emp(self, name: str):
         n = name.strip().lower()
-        hits = [e for e in self.p.employees if n in e.name.lower() or n == e.code.lower()]
+        hits = [e for e in self.p.employees if n == e.code.lower()] or \
+               [e for e in self.p.employees if n in e.name.lower()]
+        if self.user.scope_level == "POD":   # tools respect the caller's scope like the UI does
+            hits = [e for e in hits if e.pod_id == self.user.scope_id]
         if not hits:
-            raise ValueError(f"No employee matches '{name}'")
+            raise ValueError(f"No employee in your scope matches '{name}'")
         return hits[0]
 
     def lines_of(self, brand: str):
         b = brand.strip().lower()
         ls = [l for l in self.p.lines if b in l.brand_name.lower()]
+        if self.user.scope_level == "POD":
+            ls = [l for l in ls if l.pod_id == self.user.scope_id]
         if not ls:
-            raise ValueError(f"No brand matches '{brand}'")
+            raise ValueError(f"No brand in your scope matches '{brand}'")
         return ls
 
     def first(self, e_id: str) -> str:
@@ -214,20 +250,39 @@ def chat(body: ChatIn, db: Session = Depends(get_db),
     roster = db.get(M.Roster, body.roster_id)
     if roster is None:
         raise HTTPException(404, "Roster not found")
-    ctx = Ctx(db, roster, user)
     s = get_settings()
+    if not limiter.hit(f"assistant:{user.id}", s.assistant_rate_per_10min, 600):
+        raise HTTPException(429, "You've asked a lot in the last few minutes. Try again shortly.")
+    if len(body.messages) > 40 or sum(len(str(m.get("content", ""))) for m in body.messages) > 40_000:
+        raise HTTPException(413, "This conversation is too long. Start a new one.")
+    ctx = Ctx(db, roster, user)
     if not s.anthropic_api_key:
+        _audit_query(db, user, roster, "offline", [])
         return {"reply": offline_answer(ctx), "tool_calls": [], "mode": "offline"}
 
     import anthropic
     client = anthropic.Anthropic(api_key=s.anthropic_api_key)
+    pz = Pseudonymiser(ctx.p.employees)
     context = (f"Viewing roster for {roster.month:%B %Y}, version {roster.version} ({roster.status}). "
                f"Today is {date.today():%d %b %Y}. User role: {user.role}, scope {user.scope_level}.")
-    messages: list[Any] = [{"role": m["role"], "content": m["content"]} for m in body.messages
+    messages: list[Any] = [{"role": m["role"], "content": pz.mask(m["content"])} for m in body.messages
                            if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
     if not messages or messages[0]["role"] != "user":
         raise HTTPException(422, "Start the conversation with a user message.")
     calls: list[dict] = []
+    try:
+        return _loop(client, s, context, messages, ctx, pz, calls)
+    finally:
+        _audit_query(db, user, roster, "ai", [c["tool"] for c in calls])
+
+
+def _audit_query(db: Session, user: User, roster: M.Roster, mode: str, tools: list[str]) -> None:
+    audit(db, user.username, "ASSISTANT_QUERY", "roster", roster.id, None, {"mode": mode, "tools": tools})
+    db.commit()
+
+
+def _loop(client, s, context: str, messages: list[Any], ctx: Ctx, pz: Pseudonymiser, calls: list[dict]) -> dict:
+    import anthropic
     for _ in range(8):  # bounded agent loop
         try:
             resp = client.beta.messages.create(
@@ -254,7 +309,7 @@ def chat(body: ChatIn, db: Session = Depends(get_db),
         messages.append({"role": "assistant", "content": resp.content})
         if resp.stop_reason != "tool_use":
             text = "\n".join(b.text for b in resp.content if b.type == "text").strip()
-            return {"reply": text or "(no answer)", "tool_calls": calls, "mode": "ai"}
+            return {"reply": pz.unmask(text) or "(no answer)", "tool_calls": calls, "mode": "ai"}
         results = []
         for b in resp.content:
             if b.type != "tool_use":
@@ -262,10 +317,11 @@ def chat(body: ChatIn, db: Session = Depends(get_db),
             try:
                 out = run_tool(ctx, b.name, dict(b.input))
                 results.append({"type": "tool_result", "tool_use_id": b.id,
-                                "content": json.dumps(out, default=str)[:20000]})
+                                "content": pz.mask(json.dumps(out, default=str, ensure_ascii=False))[:20000]})
                 calls.append({"tool": b.name, "input": b.input, "ok": True})
             except Exception as exc:  # report tool errors back to the model
-                results.append({"type": "tool_result", "tool_use_id": b.id, "content": str(exc), "is_error": True})
+                results.append({"type": "tool_result", "tool_use_id": b.id, "content": pz.mask(str(exc)),
+                                "is_error": True})
                 calls.append({"tool": b.name, "input": b.input, "ok": False, "error": str(exc)})
         messages.append({"role": "user", "content": results})
     return {"reply": "I ran out of steps on that one. Try a narrower question.", "tool_calls": calls, "mode": "ai"}

@@ -229,12 +229,17 @@ HOLIDAYS = {
 }
 
 DEMO_USERS = [
-    # username, role, scope_level, scope (pod id / brand name / employee code / None)
-    ("admin", "SUPER_ADMIN", "COMPANY", None),
-    ("ops", "OPS_MANAGER", "COMPANY", None),
-    ("lead.south", "POD_LEAD", "POD", "pod-south"),
-    ("lead.north", "POD_LEAD", "POD", "pod-north"),
-    ("brand.kesar", "BRAND_OWNER", "BRAND", "Kesar Kitchen"),
-    ("meera", "EMPLOYEE", "SELF", "E12"),
-    ("auditor", "AUDITOR", "COMPANY", None),
+    # username, display name, role, scope_level, scope (pod id / brand name / employee code / None)
+    # Passwords are NOT here: they come from ADMIN_PASSWORD / DEMO_PASSWORD at
+    # deploy time (see app/bootstrap.py), and admins manage the rest in Team.
+    ("admin", "Isha Kapoor", "SUPER_ADMIN", "COMPANY", None),
+    ("ops", "Aarav Mehta", "OPS_MANAGER", "COMPANY", None),
+    ("lead.north", "Kavya Sharma", "POD_LEAD", "POD", "pod-north"),
+    ("lead.south", "Rohan Pillai", "POD_LEAD", "POD", "pod-south"),
+    ("lead.east", "Ananya Das", "POD_LEAD", "POD", "pod-east"),
+    ("lead.west", "Vikram Joshi", "POD_LEAD", "POD", "pod-west"),
+    ("brand.kesar", "Nisha Rao", "BRAND_OWNER", "BRAND", "Kesar Kitchen"),
+    ("meera", "Meera Iyer", "EMPLOYEE", "SELF", "E12"),
+    ("arjun", "Arjun Rao", "EMPLOYEE", "SELF", "E13"),
+    ("auditor", "Farhan Qureshi", "AUDITOR", "COMPANY", None),
 ]

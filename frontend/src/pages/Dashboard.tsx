@@ -155,6 +155,8 @@ export default function Dashboard() {
           <div className="card-head"><h2>Solver run</h2><span className="tag neutral">{r.kind.toLowerCase()}</span></div>
           <dl className="kv">
             <dt>Result</dt><dd>{r.stats?.status ?? "manual edit"}</dd>
+            {r.stats?.coverage_proven_optimal != null && <><dt>Coverage</dt><dd>{r.stats.coverage_proven_optimal ? "fewest possible gaps, proven" : "best found in the time limit"}</dd></>}
+            {r.stats?.components > 1 && <><dt>Solved as</dt><dd>{r.stats.components} independent pod groups</dd></>}
             <dt>Time</dt><dd className="num">{r.stats?.wall_ms != null ? `${(r.stats.wall_ms / 1000).toFixed(1)} s` : "—"}</dd>
             <dt>Decision variables</dt><dd className="num">{r.stats?.bools?.toLocaleString() ?? "—"}</dd>
             <dt>Optimality gap</dt><dd className="num">{r.stats?.optimality_gap_pct != null ? `${r.stats.optimality_gap_pct}%` : "—"}</dd>

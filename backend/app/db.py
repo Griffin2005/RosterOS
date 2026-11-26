@@ -49,3 +49,30 @@ def get_read_db() -> Iterator[Session]:
 def init_db() -> None:
     from . import models  # noqa: F401
     Base.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """Tiny forward-only migration: add columns that exist in the models but
+    not in an older database (e.g. a Postgres volume created by an earlier
+    version). New columns always carry a server default or are nullable."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                ddl = f'ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}'
+                if col.server_default is not None:
+                    default = col.server_default.arg
+                    if str(col.type).upper().startswith("BOOLEAN") and engine.dialect.name == "postgresql":
+                        default = "true" if str(default) == "1" else "false"
+                    ddl += f" DEFAULT '{default}'" if not str(default).isdigit() else f" DEFAULT {default}"
+                    ddl += " NOT NULL" if not col.nullable else ""
+                conn.execute(text(ddl))
+            if table.name == "user_account" and "password_hash" in have and engine.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE user_account ALTER COLUMN password_hash DROP NOT NULL"))

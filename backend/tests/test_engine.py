@@ -7,6 +7,7 @@ from app.domain.solver import solve
 from app.domain.types import (ALL_WEEK, MON_SAT, Assignment, Cell, Employee, Problem, ServiceLine,
                               Status, Weights)
 from app.domain.validator import heads_on, validate
+from conftest import build_sample_problem
 
 W = Weights(time_limit_s=10, workers=4)
 
@@ -161,3 +162,33 @@ def test_sample_december_is_valid_except_structural_gap(december):
     assert {(c.line_id, c.date) for c in hard_c} == structural
     assert set(r.gaps) == structural
     assert r.wall_ms < 25_000
+
+
+# ---------------------------------------------------------- optimisation
+def test_decomposition_follows_the_assignment_graph(december):
+    from app.domain.solver import components
+    comps = components(december)
+    # North and South are linked by a cross-pod backup (Rahul backs up Kesar Kitchen),
+    # East and West stand alone -> three independent models
+    assert len(comps) == 3
+    for E, L in comps:
+        for a in december.assignments:
+            assert (a.employee_id in E) == (a.line_id in L)
+
+
+def test_single_core_still_proves_minimum_coverage_gap():
+    """On a one-core host (Render free tier) the weighted model used to return
+    16 false gaps after 60 s. Lexicographic phase 1 proves the true minimum."""
+    p = build_sample_problem(weights=Weights(time_limit_s=12, workers=1))
+    r = solve(p)
+    assert r.stats["coverage_proven_optimal"]
+    assert set(r.gaps) == {("Bloom Basket|ACC", date(2026, 12, 22))}
+    assert len(hard(validate(p, r.plan))) == 1
+
+
+def test_decomposed_and_whole_model_agree_on_coverage(december):
+    from dataclasses import replace
+    whole = solve(build_sample_problem(weights=replace(december.weights, decompose=0, time_limit_s=15)))
+    parts = solve(build_sample_problem(weights=replace(december.weights, decompose=1, time_limit_s=15)))
+    assert set(whole.gaps) == set(parts.gaps)
+    assert parts.stats["components"] == 3 and whole.stats["components"] == 1

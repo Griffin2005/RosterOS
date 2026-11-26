@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, setToken, type Conflict, type Grid, type User } from "./api";
+import { api, setCsrf, type Conflict, type Grid, type User } from "./api";
 
 interface Toast { id: number; msg: string; err?: boolean }
 interface Ctx {
   user: User | null;
-  login: (token: string, user: User) => void;
-  logout: () => void;
+  authChecked: boolean;              // false until /api/auth/me has answered
+  login: (user: User, csrf: string) => void;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   month: string;
   setMonth: (m: string) => void;
   grid: Grid | null;
@@ -31,10 +33,13 @@ const initialMonth = () => {
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    try { return JSON.parse(localStorage.getItem("rosteros.user") || "null"); } catch { return null; }
+  // No profile or token in localStorage: the httpOnly session cookie is the
+  // only credential, and who-am-I always comes from the server.
+  const [user, setUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [month, setMonth] = useState(() => {
+    try { return localStorage.getItem("rosteros.month") || initialMonth(); } catch { return initialMonth(); }
   });
-  const [month, setMonth] = useState(() => localStorage.getItem("rosteros.month") || initialMonth());
   const [grid, setGrid] = useState<Grid | null>(null);
   const [gridLoading, setGridLoading] = useState(false);
   const [rosterId, setRosterId] = useState<string | null>(null);
@@ -48,17 +53,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err ? 6000 : 3500);
   }, []);
 
-  const logout = useCallback(() => {
-    setToken(""); localStorage.removeItem("rosteros.user"); setUser(null); setGrid(null);
-  }, []);
+  const clearSession = useCallback(() => { setCsrf(""); setUser(null); setGrid(null); }, []);
+  const logout = useCallback(async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch { /* already signed out */ }
+    clearSession();
+  }, [clearSession]);
+  const refreshUser = useCallback(async () => {
+    try { setUser(await api<User>("/api/auth/me")); } catch { clearSession(); } finally { setAuthChecked(true); }
+  }, [clearSession]);
+  useEffect(() => { refreshUser(); }, [refreshUser]);
   useEffect(() => {
-    const h = () => logout();
-    window.addEventListener("rosteros:logout", h);
-    return () => window.removeEventListener("rosteros:logout", h);
-  }, [logout]);
+    const out = () => clearSession();
+    const must = () => setUser((u) => (u ? { ...u, must_change_password: true } : u));
+    window.addEventListener("rosteros:logout", out);
+    window.addEventListener("rosteros:must-change", must);
+    return () => { window.removeEventListener("rosteros:logout", out); window.removeEventListener("rosteros:must-change", must); };
+  }, [clearSession]);
 
   const reload = useCallback(async () => {
-    if (!user) return;
+    if (!user || user.must_change_password) return;
     setGridLoading(true);
     try {
       const g = rosterId ? await api<Grid>(`/api/rosters/${rosterId}/grid`)
@@ -73,14 +86,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [user, month, rosterId, toast]);
 
   useEffect(() => { reload(); }, [reload]);
-  useEffect(() => { localStorage.setItem("rosteros.month", month); setRosterId(null); }, [month]);
+  useEffect(() => { try { localStorage.setItem("rosteros.month", month); } catch { /* storage off */ } setRosterId(null); }, [month]);
 
   const value = useMemo<Ctx>(() => ({
-    user,
-    login: (t, u) => { setToken(t); localStorage.setItem("rosteros.user", JSON.stringify(u)); setUser(u); },
-    logout, month, setMonth, grid, gridLoading, rosterId, setRosterId, reload, toast, toasts,
+    user, authChecked,
+    login: (u, c) => { setCsrf(c); setUser(u); setAuthChecked(true); },
+    logout, refreshUser, month, setMonth, grid, gridLoading, rosterId, setRosterId, reload, toast, toasts,
     conflict, openConflict, search, setSearch,
-  }), [user, logout, month, grid, gridLoading, rosterId, reload, toast, toasts, conflict, search]);
+  }), [user, authChecked, logout, refreshUser, month, grid, gridLoading, rosterId, reload, toast, toasts, conflict, search]);
 
   return <C.Provider value={value}>{children}</C.Provider>;
 }

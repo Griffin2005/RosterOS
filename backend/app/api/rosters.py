@@ -4,15 +4,16 @@ import csv
 import io
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import models as M
-from ..auth import MANAGE, WRITE_ROSTER, User, current_user, issue_token, require, verify_password
+from ..auth import MANAGE, WRITE_ROSTER, User, current_user, require
 from ..config import get_settings
+from ..security import safe_cell
 from ..db import get_db, get_read_db
 from ..domain.precheck import diff_plans
 from ..domain.types import WEEKDAY_NAMES
@@ -46,39 +47,15 @@ def _guard(fn, *a, **kw):
         raise HTTPException(409, str(e))
 
 
-# --------------------------------------------------------------------- auth
-class LoginIn(BaseModel):
-    username: str
-    password: str
-
-
-@router.post("/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
-    u = db.scalar(select(M.UserAccount).where(M.UserAccount.username == body.username.strip().lower()))
-    if u is None or not verify_password(body.password, u.password_hash):
-        raise HTTPException(401, "Username or password is incorrect.")
-    return {"token": issue_token(u), "user": {"id": u.id, "username": u.username, "role": u.role,
-                                              "scope_level": u.scope_level, "scope_id": u.scope_id,
-                                              "employee_id": u.employee_id}}
-
-
-@router.get("/auth/me")
-def me(user: User = Depends(current_user)):
-    return user.to_dict()
-
-
-@router.get("/auth/demo-users")
-def demo_users(db: Session = Depends(get_db)):
-    return {"password_hint": "Demo password is shown on the sign-in page",
-            "users": [{"username": u.username, "role": u.role, "scope_level": u.scope_level}
-                      for u in db.scalars(select(M.UserAccount).order_by(M.UserAccount.role))]}
+# (sign-in and accounts live in api/account.py)
 
 
 # ------------------------------------------------------------------ rosters
 @router.get("/rosters")
-def list_rosters(month: str, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def list_rosters(month: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     rows = db.scalars(select(M.Roster).where(M.Roster.month == _month(month)).order_by(M.Roster.version.desc()))
-    return [R.roster_meta(r) for r in rows]
+    drafts_ok = user.role in WRITE_ROSTER | {"AUDITOR"}
+    return [R.roster_meta(r) for r in rows if drafts_ok or r.status in ("PUBLISHED", "SUPERSEDED")]
 
 
 @router.get("/rosters/current")
@@ -179,15 +156,18 @@ def discard(rid: str, db: Session = Depends(get_db), user: User = Depends(requir
 
 
 @router.get("/rosters/{rid}/diff")
-def diff(rid: str, against: str | None = None, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    r = _roster(db, rid)
+def diff(rid: str, against: str | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    r = _visible_roster(db, rid, user)
     other_id = against or r.parent_id
     if not other_id:
         return {"changes": [], "against": None}
-    other = _roster(db, other_id)
+    other = _visible_roster(db, other_id, user)
     names = {e.id: e.name for e in db.scalars(select(M.Employee))}
     labels = {sl.id: f"{sl.brand.name} · {sl.process.code}" for sl in db.scalars(select(M.ServiceLine))}
     changes = diff_plans(roster_plan(other), roster_plan(r))
+    if user.scope_level != "COMPANY":   # only people inside the caller's scope
+        visible = {e["id"] for e in filter_grid(R.grid(db, r), user)["employees"]}
+        changes = [c for c in changes if c["employee_id"] in visible]
     for c in changes:
         c["employee"] = names.get(c["employee_id"])
         for side in ("before", "after"):
@@ -196,56 +176,62 @@ def diff(rid: str, against: str | None = None, db: Session = Depends(get_db), _:
     return {"against": R.roster_meta(other), "changes": changes}
 
 
+def _visible_roster(db: Session, rid: str, user: User) -> M.Roster:
+    r = _roster(db, rid)
+    if r.status != "PUBLISHED" and user.role not in WRITE_ROSTER | {"AUDITOR"}:
+        raise HTTPException(403, "Only published rosters are visible to your role.")
+    return r
+
+
+def _audit_export(user: User, r: M.Roster, fmt: str, g: dict) -> None:
+    """Exports leave the system, so each one is recorded (on the primary; the
+    export itself reads from the replica)."""
+    from ..db import SessionLocal
+    from ..services.audit import audit
+    with SessionLocal() as w:
+        audit(w, user.username, "EXPORT_DOWNLOADED", "roster", r.id, None,
+              {"format": fmt, "version": r.version, "scope": user.scope_level, "rows": len(g["employees"])})
+        w.commit()
+
+
 @router.get("/rosters/{rid}/export.csv")
 def export_csv(rid: str, db: Session = Depends(get_read_db), user: User = Depends(current_user)):
-    g = filter_grid(R.grid(db, _roster(db, rid)), user)
+    r = _visible_roster(db, rid, user)
+    g = filter_grid(R.grid(db, r), user)
     labels = {c["line_id"]: f'{c["brand"]} {c["process"]}' for c in g["coverage"]}
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Code", "Employee"] + [f"{d} {WEEKDAY_NAMES[date.fromisoformat(d).weekday()]}" for d in g["days"]])
     for e in g["employees"]:
-        row = [e["code"], e["name"]]
+        row = [safe_cell(e["code"]), safe_cell(e["name"])]
         for c in e["cells"]:
             if c is None:
                 row.append("")
             elif c["status"] == "WORK":
-                row.append("W: " + "; ".join(labels.get(l, l) + (" (backup)" if b else "") for l, b in c["covers"].items()))
+                row.append(safe_cell("W: " + "; ".join(labels.get(l, l) + (" (backup)" if b else "")
+                                                       for l, b in c["covers"].items())))
             else:
                 row.append(sheets_sync.STATUS_CODE[c["status"]])
         w.writerow(row)
+    _audit_export(user, r, "csv", g)
     month = g["roster"]["month"][:7]
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="roster-{month}-v{g["roster"]["version"]}.csv"'})
 
 
 @router.get("/rosters/{rid}/export.xlsx")
-def export_xlsx(rid: str, db: Session = Depends(get_read_db), user: User = Depends(current_user)):
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    g = filter_grid(R.grid(db, _roster(db, rid)), user)
-    fills = {"W": "DDEFE3", "WO": "EEEEEE", "PH": "E3EEF7", "L": "FBE7E4", "CO": "FBF0DC"}
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Roster"
-    ws.append(["Code", "Employee"] + [f"{date.fromisoformat(d):%d %a}" for d in g["days"]])
-    for e in g["employees"]:
-        ws.append([e["code"], e["name"]] + [sheets_sync.STATUS_CODE[c["status"]] if c else "" for c in e["cells"]])
-        for i, c in enumerate(e["cells"]):
-            if c:
-                code = sheets_sync.STATUS_CODE[c["status"]]
-                ws.cell(ws.max_row, 3 + i).fill = PatternFill("solid", fgColor=fills[code])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-    cov = wb.create_sheet("Coverage")
-    cov.append(["Line"] + [f"{date.fromisoformat(d):%d %a}" for d in g["days"]])
-    for c in g["coverage"]:
-        cov.append([f'{c["brand"]} · {c["process"]}'] +
-                   [("" if x["req"] == 0 else f'{len(x["heads"])}/{x["req"]}') for x in c["days"]])
-    out = io.BytesIO()
-    wb.save(out)
+def export_xlsx(rid: str, request: Request, db: Session = Depends(get_read_db), user: User = Depends(current_user)):
+    from ..domain.calendar import fmt_minutes
+    from ..services.workbook import build_workbook
+    r = _visible_roster(db, rid, user)
+    g = filter_grid(R.grid(db, r), user)
+    meta = {sl.id: {"min_heads": sl.min_heads, "shift": f"{fmt_minutes(sl.shift_start)}-{fmt_minutes(sl.shift_end)}"}
+            for sl in db.scalars(select(M.ServiceLine))}
+    data = build_workbook(g, lines_meta=meta, exported_by=user.username,
+                          app_url=str(request.base_url).rstrip("/"))
+    _audit_export(user, r, "xlsx", g)
     month = g["roster"]["month"][:7]
-    return Response(out.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="roster-{month}-v{g["roster"]["version"]}.xlsx"'})
 
 
@@ -276,9 +262,16 @@ def rules_versions(db: Session = Depends(get_db), _: User = Depends(current_user
 
 
 @router.get("/sheets/{which}")
-def view_sheet(which: str, _: User = Depends(current_user)):
-    """Read a workbook so the UI can show the 'Google Sheet' side by side."""
+def view_sheet(which: str, user: User = Depends(current_user)):
+    """Read a workbook so the UI can show the 'Google Sheet' side by side.
+    The rules sheet is business configuration anyone may read; the dashboard
+    workbook mirrors the whole company roster, so it is limited to roles that
+    already see company or pod rosters."""
     from ..integrations.google import google
+    if which not in ("rules", "dashboards"):
+        raise HTTPException(404, "Unknown sheet")
+    if which == "dashboards" and user.role not in {"SUPER_ADMIN", "OPS_MANAGER", "POD_LEAD", "AUDITOR"}:
+        raise HTTPException(403, "The dashboard workbook shows the whole company roster; your role can't open it.")
     s = get_settings()
     sid = s.rules_spreadsheet_id if which == "rules" else s.dashboard_spreadsheet_id
     if s.sheets_mode == "embedded":
@@ -321,8 +314,9 @@ def edit_rules_sheet(tab: str, body: SheetTabIn, user: User = Depends(require(MA
 def notifications(db: Session = Depends(get_db), user: User = Depends(current_user)):
     q = select(M.Notification).order_by(M.Notification.id.desc()).limit(50)
     rows = db.scalars(q).all()
-    if user.scope_level == "SELF":
-        rows = [n for n in rows if n.audience in ("ALL", f"EMP:{user.employee_id}")]
+    if user.role not in MANAGE | {"AUDITOR"}:   # personal notices only reach that person (and their pod)
+        mine = {"ALL", f"EMP:{user.employee_id}"} | ({f"POD:{user.scope_id}"} if user.scope_level == "POD" else set())
+        rows = [n for n in rows if n.audience in mine]
     return [{"id": n.id, "message": n.message, "audience": n.audience, "at": n.at.isoformat()} for n in rows]
 
 

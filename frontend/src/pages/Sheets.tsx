@@ -11,6 +11,8 @@ export default function SheetsPage() {
   const [rows, setRows] = useState<string[][]>([]);
   const [dirty, setDirty] = useState(false);
   const manage = canManage(user);
+  // the dashboard workbook mirrors the whole company roster
+  const canDash = !!user && ["SUPER_ADMIN", "OPS_MANAGER", "POD_LEAD", "AUDITOR"].includes(user.role);
 
   const load = () => api(`/api/sheets/${which}`).then((s) => {
     setSheet(s);
@@ -34,7 +36,8 @@ export default function SheetsPage() {
     <>
       <div className="page-head">
         <div><h1>Google Sheets</h1><p>The ops team keeps working rules in a Sheet; published rosters are mirrored to a dashboard workbook. This demo uses a mock with the same API as Google Sheets.</p></div>
-        <div className="seg"><button className={which === "rules" ? "on" : ""} onClick={() => setWhich("rules")}>Rules &amp; Coverage</button><button className={which === "dashboards" ? "on" : ""} onClick={() => setWhich("dashboards")}>Roster dashboards</button></div>
+        <div className="seg"><button className={which === "rules" ? "on" : ""} onClick={() => setWhich("rules")}>Rules &amp; Coverage</button>
+          {canDash && <button className={which === "dashboards" ? "on" : ""} onClick={() => setWhich("dashboards")}>Roster dashboards</button>}</div>
       </div>
       {sheet && (
         <>

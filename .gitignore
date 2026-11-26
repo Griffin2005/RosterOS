@@ -6,5 +6,6 @@ __pycache__/
 backend/.venv/
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 backups/
 .DS_Store

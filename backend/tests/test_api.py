@@ -1,32 +1,12 @@
-"""End-to-end API flow on a throwaway SQLite database:
+"""End-to-end API flow on a throwaway SQLite database (see conftest):
 seed -> published December -> leave approved after publishing -> gap flagged ->
 suggestions -> repair -> publish -> scoped views -> rules change from the Sheet."""
-import os
-import tempfile
+import io
 import time
-from pathlib import Path
 
-DB = Path(tempfile.mkdtemp()) / "test.db"
-os.environ["DATABASE_URL"] = f"sqlite:///{DB.as_posix()}"
-os.environ["AUTO_SEED"] = "1"
-os.environ["SOLVER_TIME_LIMIT_S"] = "20"
+from openpyxl import load_workbook
 
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app.main import app  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as c:
-        yield c
-
-
-def login(client, user):
-    r = client.post("/api/auth/login", json={"username": user, "password": "roster@123"})
-    assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+from conftest import login
 
 
 def wait_job(client, h, job_id):
@@ -121,6 +101,17 @@ def test_generate_next_month_and_exports(client):
     assert client.get(f"/api/rosters/{j['roster_id']}/export.csv", headers=ops).status_code == 200
     x = client.get(f"/api/rosters/{j['roster_id']}/export.xlsx", headers=ops)
     assert x.status_code == 200 and x.content[:2] == b"PK"
+    wb = load_workbook(io.BytesIO(x.content))
+    assert wb.sheetnames[:4] == ["Overview", "Roster", "Coverage", "Requirements"]
+    assert {"RosterGrid", "RosterCodes", "RosterDates", "CoverCounts", "CoverDates", "CoverLines"} <= set(wb.defined_names)
+    # cross-sheet references: coverage is computed from Covers, Covers checks Roster live
+    assert wb["Coverage"]["E2"].value.startswith("=SUMIFS(CoverCounts,CoverDates,E$1,CoverLines,$A2)")
+    assert "INDEX(RosterGrid" in wb["Covers"]["F2"].value
+    assert wb["Roster"]["B2"].value.startswith("=IFERROR(INDEX(Employees!")
+    assert wb["Overview"]["B14"].value == "=IF(B12=0,1,1-B13/B12)"
+    assert wb["Roster"].data_validations.dataValidation    # status codes constrained
+    audit = client.get("/api/audit?limit=20", headers=ops).json()
+    assert any(a["action"] == "EXPORT_DOWNLOADED" and a["after"]["format"] == "xlsx" for a in audit)
     chat = client.post("/api/assistant/chat", headers=ops,
                        json={"roster_id": j["roster_id"], "messages": [{"role": "user", "content": "What's wrong?"}]})
     assert chat.status_code == 200 and chat.json()["reply"]

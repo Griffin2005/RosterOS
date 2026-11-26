@@ -222,26 +222,40 @@ class Job(Base):
 
 
 class UserAccount(Base):
+    """A sign-in account. Deliberately holds no contact data (no email, no
+    phone): the roster needs a role and a scope, nothing more."""
     __tablename__ = "user_account"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     username: Mapped[str] = mapped_column(String(60), unique=True)
-    password_hash: Mapped[str] = mapped_column(String(200))
+    full_name: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Argon2id; NULL = cannot sign in
     role: Mapped[str] = mapped_column(String(16))
     scope_level: Mapped[str] = mapped_column(String(10))   # COMPANY POD BRAND PROCESS SELF
     scope_id: Mapped[str | None] = mapped_column(String(36))
     employee_id: Mapped[str | None] = mapped_column(ForeignKey("employee.id", ondelete="SET NULL"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # bumped on password change, reset, role change or deactivation: every
+    # session issued before that stops working immediately
+    session_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=now, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
 
 class AuditEvent(Base):
     __tablename__ = "audit_event"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     actor: Mapped[str] = mapped_column(String(80))
-    action: Mapped[str] = mapped_column(String(40))
+    action: Mapped[str] = mapped_column(String(40), index=True)
     entity: Mapped[str] = mapped_column(String(40))
     entity_id: Mapped[str | None] = mapped_column(String(80))
     before: Mapped[dict | None] = mapped_column(JSON)
     after: Mapped[dict | None] = mapped_column(JSON)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
 
 
 class Notification(Base):

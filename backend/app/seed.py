@@ -13,7 +13,6 @@ from sqlalchemy import select
 
 from . import models as M
 from . import sample_data as S
-from .auth import hash_password
 from .config import get_settings
 from .db import Base, SessionLocal, engine, init_db
 from .services import rosters as R
@@ -71,8 +70,9 @@ def seed(publish_demo: bool = True) -> None:
         for code, a, b, typ, status in S.LEAVES:
             db.add(M.Leave(employee_id=emps[code].id, start_date=date.fromisoformat(a),
                            end_date=date.fromisoformat(b), type=typ, status=status))
-        pw = hash_password(get_settings().demo_password)
-        for username, role, level, scope in S.DEMO_USERS:
+        # accounts are created without a password; app/bootstrap.py sets them
+        # from deployment secrets at start-up (never at image build time)
+        for username, full_name, role, level, scope in S.DEMO_USERS:
             scope_id, emp_id = None, None
             if level == "POD":
                 scope_id = scope
@@ -82,8 +82,8 @@ def seed(publish_demo: bool = True) -> None:
                 emp_id = emps[scope].id
             if role == "POD_LEAD":
                 emp_id = pods[scope].lead_id
-            db.add(M.UserAccount(username=username, password_hash=pw, role=role, scope_level=level,
-                                 scope_id=scope_id, employee_id=emp_id))
+            db.add(M.UserAccount(username=username, full_name=full_name, password_hash=None, role=role,
+                                 scope_level=level, scope_id=scope_id, employee_id=emp_id, created_by="seed"))
         db.commit()
         print(f"Seeded {len(emps)} employees, {len(brands)} brands, {len(lines)} service lines.")
 

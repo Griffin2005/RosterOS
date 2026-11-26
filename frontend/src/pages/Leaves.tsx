@@ -41,7 +41,7 @@ export default function LeavesPage() {
                 <tr key={l.id}>
                   <td>{l.employee}</td>
                   <td className="num">{fmtDay(l.start_date)}{l.end_date !== l.start_date ? ` → ${fmtDay(l.end_date)}` : ""}</td>
-                  <td>{l.type === "COMP_OFF" ? "Comp-off" : l.type}</td>
+                  <td>{({ COMP_OFF: "Comp-off", PL: "Planned", SL: "Sick", AWAY: "Unavailable" } as Record<string, string>)[l.type] ?? l.type}</td>
                   <td><span className={`tag ${l.status === "APPROVED" ? "ok" : l.status === "PENDING" ? "soft" : "neutral"}`}>{l.status.toLowerCase()}</span></td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     {canEditRoster(user) && l.status === "PENDING" && <><button className="btn sm primary" onClick={() => act(l.id, "approve")}>Approve</button> <button className="btn sm ghost" onClick={() => act(l.id, "reject")}>Reject</button></>}
@@ -71,7 +71,8 @@ export default function LeavesPage() {
                 <option value="PL">Planned leave</option><option value="SL">Sick leave</option><option value="COMP_OFF">Comp-off</option>
               </select>
             </label>
-            <label className="field">Note<input id="leave-note" className="input" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
+            <label className="field">Note<input id="leave-note" className="input" maxLength={200} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+              <small className="subtle">Visible to you, your pod lead and managers only. No medical details needed.</small></label>
             <button className="btn primary" style={{ alignSelf: "flex-start" }}>Submit request</button>
           </form>
         )}

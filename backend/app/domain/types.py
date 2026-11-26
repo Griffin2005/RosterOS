@@ -100,6 +100,8 @@ class Weights:
     time_limit_s: float = 30.0
     workers: int = 8
     seed: int = 7
+    lexicographic: int = 1   # 1: coverage first (proven), then quality; 0: single weighted solve
+    decompose: int = 1       # 1: solve independent pods separately
 
 
 @dataclass

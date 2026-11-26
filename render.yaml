@@ -2,6 +2,12 @@
 # One Docker web service built from the root Dockerfile. The database is
 # SQLite seeded into the image, so every deploy or restart starts from the
 # clean demo state (December published, one acknowledged gap).
+#
+# Secrets are never in this file. Render asks for the `sync: false` values
+# when the Blueprint is applied; they must meet the password policy
+# (12+ characters, upper and lower case, a number, a symbol, not containing
+# the username). Without DEMO_PASSWORD the other demo accounts stay disabled
+# until the admin issues them one-time passwords from Team.
 services:
   - type: web
     name: rosteros
@@ -13,11 +19,20 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
+      - key: ENV
+        value: production          # secure cookies, HSTS, no public API docs, strict start-up checks
       - key: JWT_SECRET
         generateValue: true
+      - key: ADMIN_PASSWORD        # required: password for the `admin` account
+        sync: false
+      - key: DEMO_PASSWORD         # optional: shared password for ops, leads, brand owner, employees, auditor
+        sync: false
+      # The free plan is 0.1 vCPU: one search thread, and enough wall time for
+      # the coverage phase to finish its proof (measured: proven in well under
+      # a minute; the quality phase then stops once it stops improving).
       - key: SOLVER_WORKERS
-        value: "2"
+        value: "1"
       - key: SOLVER_TIME_LIMIT_S
-        value: "20"
-      - key: ANTHROPIC_API_KEY   # optional; without it the assistant answers from the validator
+        value: "60"
+      - key: ANTHROPIC_API_KEY     # optional; without it the assistant answers from the validator
         sync: false

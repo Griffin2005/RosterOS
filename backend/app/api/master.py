@@ -106,8 +106,13 @@ def _set_prefs(db: Session, emp_id: str, days: list[int]):
 
 
 @router.get("/employees")
-def list_employees(db: Session = Depends(get_db), _: User = Depends(current_user)):
-    return [_emp_out(db, e) for e in db.scalars(select(M.Employee).order_by(M.Employee.code))]
+def list_employees(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    rows = db.scalars(select(M.Employee).order_by(M.Employee.code)).all()
+    if user.role in MANAGE | {"POD_LEAD", "AUDITOR"}:
+        return [_emp_out(db, e) for e in rows]
+    # everyone else gets the directory only: no capacity, preferences or assignments
+    return [{"id": e.id, "code": e.code, "name": e.name, "pod_id": e.pod_id, "active": e.active,
+             "assignments": [], "preferred_off": []} for e in rows]
 
 
 @router.post("/employees")
@@ -322,19 +327,31 @@ class LeaveIn(BaseModel):
     note: str = ""
 
 
-def _leave_out(lv: M.Leave, names: dict[str, str]) -> dict:
+def _leave_out(lv: M.Leave, names: dict[str, str], detail: bool = True) -> dict:
+    """detail=False hides why someone is away (sick vs planned, and the note):
+    a brand owner needs to know a person is unavailable, not the reason."""
     return {"id": lv.id, "employee_id": lv.employee_id, "employee": names.get(lv.employee_id),
-            "start_date": lv.start_date.isoformat(), "end_date": lv.end_date.isoformat(), "type": lv.type,
-            "status": lv.status, "note": lv.note}
+            "start_date": lv.start_date.isoformat(), "end_date": lv.end_date.isoformat(),
+            "type": lv.type if detail else "AWAY", "status": lv.status, "note": lv.note if detail else ""}
 
 
 @router.get("/leaves")
 def list_leaves(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    names = {e.id: e.name for e in db.scalars(select(M.Employee))}
+    emps = db.scalars(select(M.Employee)).all()
+    names = {e.id: e.name for e in emps}
     q = select(M.Leave).order_by(M.Leave.start_date)
     if user.scope_level == "SELF":
         q = q.where(M.Leave.employee_id == user.employee_id)
-    return [_leave_out(lv, names) for lv in db.scalars(q)]
+    rows = db.scalars(q).all()
+    if user.scope_level == "POD":
+        pod = {e.id for e in emps if e.pod_id == user.scope_id}
+        return [_leave_out(lv, names) for lv in rows if lv.employee_id in pod]
+    if user.scope_level == "BRAND":
+        lines = {sl.id for sl in db.scalars(select(M.ServiceLine).where(M.ServiceLine.brand_id == user.scope_id))}
+        people = {a.employee_id for a in db.scalars(select(M.Assignment)) if a.service_line_id in lines}
+        return [_leave_out(lv, names, detail=False) for lv in rows
+                if lv.employee_id in people and lv.status == "APPROVED"]
+    return [_leave_out(lv, names) for lv in rows]
 
 
 @router.post("/leaves")
@@ -343,6 +360,12 @@ def request_leave(body: LeaveIn, db: Session = Depends(get_db), user: User = Dep
         raise HTTPException(403, "You can only request leave for yourself.")
     if user.role in ("AUDITOR", "BRAND_OWNER"):
         raise HTTPException(403, "Your role can't request leave.")
+    if user.role == "POD_LEAD":
+        emp = db.get(M.Employee, body.employee_id)
+        if emp is None or emp.pod_id != user.scope_id:
+            raise HTTPException(403, "Pod leads can only file leave for people in their pod.")
+    if len(body.note) > 200:
+        raise HTTPException(422, "Keep the note under 200 characters.")
     if body.end_date < body.start_date:
         raise HTTPException(422, "End date is before start date.")
     if body.type not in ("PL", "SL", "COMP_OFF"):
@@ -406,6 +429,8 @@ def cancel_leave(lid: str, db: Session = Depends(get_db), user: User = Depends(c
     lv = _get(db, M.Leave, lid)
     if user.role == "EMPLOYEE" and lv.employee_id != user.employee_id:
         raise HTTPException(403, "You can only cancel your own leave.")
+    if user.role in ("AUDITOR", "BRAND_OWNER"):
+        raise HTTPException(403, "Your role can't change leave.")
     lv = _set_leave_status(db, lid, "CANCELLED", user)
     return {"status": lv.status, "impact": leave_impact(db, lv)}
 

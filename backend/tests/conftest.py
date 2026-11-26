@@ -1,8 +1,25 @@
+import os
 import sys
+import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+
+# One throwaway database and test-only secrets for every API test module.
+# Set before anything imports app.config (settings are cached on first use).
+_DB = Path(tempfile.mkdtemp()) / "test.db"
+os.environ.update({
+    "DATABASE_URL": f"sqlite:///{_DB.as_posix()}",
+    "AUTO_SEED": "1",
+    "ENV": "development",
+    "SOLVER_TIME_LIMIT_S": "20",
+    "ADMIN_PASSWORD": "Kv8#mPq2!wZr4t",
+    "DEMO_PASSWORD": "Rq7$Lt3@Nx9!Hb",
+    "LOGIN_RATE_PER_MINUTE": "1000",       # the IP limit gets its own test
+    "JWT_SECRET": "test-secret-that-is-long-enough-for-hs256-0123456789",
+})
+ADMIN_PW, DEMO_PW = os.environ["ADMIN_PASSWORD"], os.environ["DEMO_PASSWORD"]
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -51,3 +68,22 @@ def build_sample_problem(year: int = 2026, month: int = 12, **kw) -> Problem:
 @pytest.fixture(scope="session")
 def december():
     return build_sample_problem()
+
+
+@pytest.fixture(scope="session")
+def client():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as c:
+        yield c
+
+
+def login(client, user: str, password: str | None = None) -> dict:
+    """Sign in and return Bearer headers (API-client style, no CSRF needed).
+    The cookie jar is cleared so tests acting as several users don't mix sessions."""
+    pw = password or (ADMIN_PW if user == "admin" else DEMO_PW)
+    r = client.post("/api/auth/login", json={"username": user, "password": pw})
+    assert r.status_code == 200, r.text
+    token = r.cookies.get("rosteros_session")
+    client.cookies.clear()
+    return {"Authorization": f"Bearer {token}"}

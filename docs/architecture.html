@@ -192,7 +192,7 @@ td.k { font-weight: 600; white-space: nowrap; }
   <aside class="hero-card" aria-label="Sample dataset and core decision">
     <span class="eyebrow">Core decision</span>
     <h3>Optimise, then verify independently</h3>
-    <p>The CP-SAT solver handles mandatory rules as hard constraints and preferences as weighted penalties. Coverage shortfalls become penalised slack, never silent failures. A separate deterministic validator re-checks every roster, including manual edits, before it can be published.</p>
+    <p>The CP-SAT solver handles mandatory rules as hard constraints. It first proves the fewest possible coverage gaps, then optimises preferences without ever trading that coverage away. Shortfalls are reported, never silently dropped. A separate deterministic validator re-checks every roster, including manual edits, before it can be published.</p>
     <div class="facts">
       <div class="fact"><b>32</b><span>employees</span></div>
       <div class="fact"><b>22</b><span>brands (18 single)</span></div>
@@ -459,14 +459,15 @@ td.k { font-weight: 600; white-space: nowrap; }
       </ul>
     </div>
     <div class="panel">
-      <h3>Objective (minimise)</h3>
-      <div class="formula">  10 000 · Σ slack[s,d]                 coverage gaps
-+    500 · Σ changed[e,d]              repair mode only
-+     80 · Σ backup_cover[e,s,d]       prefer primaries
-+     40 · (maxSunWork − minSunWork)   fair Sundays / PH
-+     20 · Σ pref_off_violated[e,d]    preferred off-days
-+      5 · Σ split_offs[e,w]           keep 2 offs adjacent</div>
-      <p>Weights are stored in the <code>solver_settings</code> table, so they can be tuned without a deploy. A gap always costs more than any combination of preference violations, so <b>coverage always wins over a preferred off-day</b>, as the brief requires.</p>
+      <h3>Objective: lexicographic, two phases</h3>
+      <div class="formula">Phase 1   minimise  G = Σ slack[s,d]          prove the fewest gaps
+Phase 2   fix       Σ slack[s,d] ≤ G*         keep that coverage
+          minimise    500 · Σ changed[e,d]    repair mode only
+                    +  80 · Σ backup_cover    prefer primaries
+                    +  40 · (maxSun − minSun) fair Sundays / PH
+                    +  20 · Σ pref_off_viol.  preferred off-days
+                    +   5 · Σ split_offs      keep 2 offs adjacent</div>
+      <p>Phase 2 starts from phase 1's solution. <b>Coverage always wins over a preferred off-day</b>, as the brief requires, and this holds by construction rather than by weighting. If phase 2 runs out of time, the roster's coverage is still provably the best the rules allow. Phase 2 weights are stored in the <code>solver_settings</code> table, so they can be tuned without a deploy.</p>
     </div>
   </div>
 
@@ -502,7 +503,8 @@ td.k { font-weight: 600; white-space: nowrap; }
         <li>Hard and soft rules sit in one model with explicit priorities, and the solver reports an optimality gap.</li>
         <li>Solution hints from the previous roster plus a <code>changed</code> penalty give stable incremental repairs.</li>
         <li>Every run records its status, objective, optimality gap and the rule-set version it used, so any roster can be re-checked against the rules it was built under.</li>
-        <li>Size: the sample month has about 4 000 booleans and solves to proven optimal in 3–4 s on a laptop, well under the 30 s cap.</li>
+        <li>Decomposition: people and lines interact only through assignments, so the model splits into connected components (East, West, and North+South, which a cross-pod backup links). Each is solved in turn with every worker.</li>
+        <li>Size: the sample month has about 4 000 booleans and proves optimal in 5–7 s on a laptop. On a single throttled vCPU, phase 1 still proves the coverage minimum. Before the two-phase model, the same host returned 16–22 false gaps.</li>
       </ul>
     </div>
   </div>
@@ -852,13 +854,17 @@ sequenceDiagram
   <div class="sec-head">
     <span class="eyebrow">09 · Security</span>
     <h2>Controls by layer</h2>
+    <p>The first row describes what this build implements and tests. The rows after it add the AWS production layers.</p>
   </div>
   <div class="grid3">
-    <div class="panel"><h3>Identity</h3><ul><li>Cognito user pool; MFA required for Admin and Ops roles</li><li>15-min access tokens, rotating refresh tokens</li><li>Role and scope in token claims, re-checked against DB per request</li></ul></div>
+    <div class="panel"><h3>Accounts (implemented)</h3><ul><li>Argon2id password hashes (19 MiB, t=2); PBKDF2 hashes upgrade on sign-in</li><li>Policy: 12+ characters, mixed classes, no username, not common, no runs</li><li>Lockout after 5 failures; per-IP rate limit; identical errors for unknown users</li><li>No passwords in code or images: seeded accounts get theirs from deployment secrets at start-up</li></ul></div>
+    <div class="panel"><h3>Sessions (implemented)</h3><ul><li>JWT holding only the account id and session version, in an httpOnly SameSite=Strict cookie (Secure in production)</li><li>CSRF token bound to the session on every write</li><li>Session version bumps on password change, reset, role change or deactivation, which ends older sessions at once</li><li>Temporary passwords must be replaced before any other call succeeds</li></ul></div>
+    <div class="panel"><h3>Team &amp; HTTP (implemented)</h3><ul><li>Nobody grants a role at or above their own; the last active super admin is protected</li><li>CSP, HSTS, frame-ancestors none, nosniff, Referrer- and Permissions-Policy</li><li>API docs off in production; startup refuses weak secrets</li><li>Exports scoped, audited and protected against formula injection</li></ul></div>
+    <div class="panel"><h3>Identity (AWS)</h3><ul><li>Cognito user pool; MFA required for Admin and Ops roles</li><li>15-min access tokens, rotating refresh tokens</li><li>Role and scope re-checked against the database on every request</li></ul></div>
     <div class="panel"><h3>Network</h3><ul><li>DB and Redis in isolated subnets, no internet route</li><li>Security groups allow only API → DB, workers → Redis</li><li>WAF managed rules + per-IP rate limit at CloudFront</li><li>Egress to Google and Anthropic through NAT only</li></ul></div>
-    <div class="panel"><h3>Data</h3><ul><li>KMS encryption at rest for RDS, S3, Redis, backups</li><li>TLS 1.2+ on every hop, including DB connections</li><li>Phone / personal email encrypted at column level (pgcrypto)</li><li>Row-level security mirrors the RBAC scope</li></ul></div>
+    <div class="panel"><h3>Data</h3><ul><li>KMS encryption at rest for RDS, S3, Redis, backups</li><li>TLS 1.2+ on every hop, including DB connections</li><li>No contact data stored; client IPs kept only as keyed hashes</li><li>Leave reasons limited to the employee, their pod lead and managers</li><li>Row-level security mirrors the RBAC scope</li></ul></div>
     <div class="panel"><h3>Secrets &amp; keys</h3><ul><li>Secrets Manager with rotation; nothing in images or env files</li><li>Google access through Workload Identity Federation from the AWS task role, so no long-lived service-account key</li><li>NAS backups encrypted with a key held offline</li></ul></div>
-    <div class="panel"><h3>AI data handling</h3><ul><li>Assistant receives employee IDs, first names and schedule facts only, never contact data</li><li>Tool calls run with the caller's scope</li><li>Prompts, tool calls and outputs written to the audit log</li></ul></div>
+    <div class="panel"><h3>AI data handling</h3><ul><li>Names are replaced with employee codes before any request leaves the server, and restored only in the reply shown to the reader</li><li>Tool calls run with the caller's scope</li><li>Each query is rate limited per user and audited (mode and tools used) without its content</li></ul></div>
     <div class="panel"><h3>Supply chain &amp; audit</h3><ul><li>Pinned base images, non-root containers, read-only root FS</li><li>ECR scan on push; CI blocks critical CVEs</li><li>Append-only <code>audit_event</code> + CloudTrail; S3 Object Lock on backups</li></ul></div>
   </div>
 </section>
