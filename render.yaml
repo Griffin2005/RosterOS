@@ -1,13 +1,26 @@
 # Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
-# One Docker web service built from the root Dockerfile. The database is
-# SQLite seeded into the image, so every deploy or restart starts from the
-# clean demo state (December published, one acknowledged gap).
+# One Docker web service built from the root Dockerfile, plus a managed
+# PostgreSQL 16 database. Data persists across deploys and restarts. On the
+# first start against an empty database the app seeds the sample data and
+# publishes December; later starts only add missing columns (forward-only
+# migration) and any missing demo accounts.
 #
 # Secrets are never in this file. Render asks for the `sync: false` values
 # when the Blueprint is applied; they must meet the password policy
 # (12+ characters, upper and lower case, a number, a symbol, not containing
 # the username). Without DEMO_PASSWORD the other demo accounts stay disabled
-# until the admin issues them one-time passwords from Team.
+# until the admin issues them one-time passwords from Team. Passwords are
+# applied to accounts that do not have one yet; after that, change them in
+# the app (Account, or Team for other people).
+databases:
+  - name: rosteros-db
+    plan: free                     # free Render Postgres expires 30 days after creation unless upgraded
+    region: oregon
+    postgresMajorVersion: "16"
+    databaseName: rosteros
+    user: rosteros
+    ipAllowList: []                # no access from the internet: only services in this account connect
+
 services:
   - type: web
     name: rosteros
@@ -15,12 +28,16 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free
-    region: singapore
+    region: oregon                 # same region as the database, so it uses the private network
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
       - key: ENV
         value: production          # secure cookies, HSTS, no public API docs, strict start-up checks
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rosteros-db
+          property: connectionString   # internal address; the app selects the psycopg driver itself
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_PASSWORD        # required: password for the `admin` account

@@ -27,6 +27,9 @@ def seed(publish_demo: bool = True) -> None:
     try:
         if db.scalar(select(M.UserAccount)) is not None:
             print("Database already seeded.")
+            added = _ensure_demo_accounts(db)
+            if added:
+                print(f"Added {added} missing demo account(s).")
             _refresh_dashboard_mirror(db)
             return
         procs = {code: M.Process(code=code, name=name) for code, name in S.PROCESSES}
@@ -70,21 +73,8 @@ def seed(publish_demo: bool = True) -> None:
         for code, a, b, typ, status in S.LEAVES:
             db.add(M.Leave(employee_id=emps[code].id, start_date=date.fromisoformat(a),
                            end_date=date.fromisoformat(b), type=typ, status=status))
-        # accounts are created without a password; app/bootstrap.py sets them
-        # from deployment secrets at start-up (never at image build time)
-        for username, full_name, role, level, scope in S.DEMO_USERS:
-            scope_id, emp_id = None, None
-            if level == "POD":
-                scope_id = scope
-            elif level == "BRAND":
-                scope_id = brands[scope].id
-            elif level == "SELF":
-                emp_id = emps[scope].id
-            if role == "POD_LEAD":
-                emp_id = pods[scope].lead_id
-            db.add(M.UserAccount(username=username, full_name=full_name, password_hash=None, role=role,
-                                 scope_level=level, scope_id=scope_id, employee_id=emp_id, created_by="seed"))
         db.commit()
+        _ensure_demo_accounts(db)
         print(f"Seeded {len(emps)} employees, {len(brands)} brands, {len(lines)} service lines.")
 
         if publish_demo:
@@ -105,6 +95,42 @@ def seed(publish_demo: bool = True) -> None:
                   f"{r.solver_stats.get('status')}); sheets push: {out['sheets'].get('ok')}")
     finally:
         db.close()
+
+
+def _ensure_demo_accounts(db) -> int:
+    """Create any demo account that does not exist yet, e.g. in a database
+    seeded before that account was added. Existing accounts (including ones
+    an admin changed or deactivated) are never touched. New accounts have no
+    password: app/bootstrap.py sets it from deployment secrets at start-up,
+    never at image build time."""
+    have = set(db.scalars(select(M.UserAccount.username)))
+    added = 0
+    for username, full_name, role, level, scope in S.DEMO_USERS:
+        if username in have:
+            continue
+        scope_id, emp_id = None, None
+        if level == "POD":
+            scope_id = scope
+        elif level == "BRAND":
+            brand = db.scalar(select(M.Brand).where(M.Brand.name == scope))
+            if brand is None:
+                continue
+            scope_id = brand.id
+        elif level == "SELF":
+            emp = db.scalar(select(M.Employee).where(M.Employee.code == scope))
+            if emp is None:
+                continue
+            emp_id = emp.id
+        if role == "POD_LEAD":
+            pod = db.get(M.Pod, scope)
+            if pod is None:
+                continue
+            emp_id = pod.lead_id
+        db.add(M.UserAccount(username=username, full_name=full_name, password_hash=None, role=role,
+                             scope_level=level, scope_id=scope_id, employee_id=emp_id, created_by="seed"))
+        added += 1
+    db.commit()
+    return added
 
 
 def _refresh_dashboard_mirror(db) -> None:

@@ -299,6 +299,26 @@ def test_settings_ignore_pasted_whitespace(monkeypatch):
     assert s.production and s.admin_password == "Kv8#mPq2!wZr4t"
 
 
+def test_missing_demo_accounts_are_added_to_an_existing_database():
+    from app import models as M
+    from app.db import SessionLocal
+    from app.seed import _ensure_demo_accounts
+    with SessionLocal() as db:
+        assert _ensure_demo_accounts(db) == 0                       # complete database: nothing to do
+        old = db.query(M.UserAccount).filter_by(username="arjun").one()
+        old.username = "arjun.renamed"                              # simulate an older database
+        db.commit()
+        try:
+            assert _ensure_demo_accounts(db) == 1
+            new = db.query(M.UserAccount).filter_by(username="arjun").one()
+            assert new.password_hash is None and new.role == "EMPLOYEE" and new.employee_id == old.employee_id
+            db.delete(new)
+            db.commit()
+        finally:
+            old.username = "arjun"
+            db.commit()
+
+
 def test_hosted_postgres_urls_use_the_installed_driver():
     from app.db import normalise_url
     assert normalise_url("postgres://u:p@h:5432/d") == "postgresql+psycopg://u:p@h:5432/d"

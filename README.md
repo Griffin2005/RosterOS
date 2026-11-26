@@ -47,13 +47,16 @@ An existing database from an older version is upgraded in place on start-up: mis
 
 ### Hosted demo (Render)
 
-The root `Dockerfile` builds a single container: FastAPI serves the API, the built React app and the embedded Google mock on one port. `render.yaml` is a Render Blueprint for it. To deploy, open Render, choose **New → Blueprint**, and pick this repository. Render asks for `ADMIN_PASSWORD` (required) and `DEMO_PASSWORD` (optional) as secrets; `JWT_SECRET` is generated for you. The image itself defaults to `ENV=production`, so a host that skips the Blueprint's settings still gets production mode rather than development mode.
+The root `Dockerfile` builds a single container: FastAPI serves the API, the built React app and the embedded Google mock on one port. `render.yaml` is a Render Blueprint for it plus a managed PostgreSQL 16 database. To deploy, open Render, choose **New → Blueprint**, and pick this repository. Render asks for `ADMIN_PASSWORD` (required) and `DEMO_PASSWORD` (optional) as secrets; `JWT_SECRET` is generated and `DATABASE_URL` is wired to the database for you. The image itself defaults to `ENV=production`, so a host that skips the Blueprint's settings still gets production mode rather than development mode.
 
-The demo database is SQLite and is seeded while the image builds, without any passwords. The container sets them from the secrets when it starts. Every deploy or restart comes up in the clean demo state, with December published and one acknowledged gap.
+Data lives in Render Postgres and survives deploys and restarts. The database accepts no connections from the internet; only the web service reaches it, over Render's private network. On the first start against an empty database the app seeds the sample data and publishes December. Later starts only add missing columns and missing demo accounts, and set passwords for accounts that don't have one yet. The hosted demo was migrated from the Compose database with `pg_dump`/`pg_restore`, so it carries the same rosters, leaves and audit trail.
+
+Without `DATABASE_URL` the image falls back to a SQLite file seeded at build time, which resets on every deploy.
 
 On Render's free plan:
 - The service sleeps after 15 minutes idle. The first request after that takes about a minute.
 - Generating a month takes 45–55 seconds on the plan's 0.1 vCPU. Coverage is still proven optimal; the measured result matched an 8-core run.
+- A free Postgres database expires 30 days after it is created unless it is upgraded to a paid plan.
 
 The replica, backups and Redis workers are in the Compose stack and the AWS design, not in this single container.
 
