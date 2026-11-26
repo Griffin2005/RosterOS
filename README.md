@@ -47,7 +47,7 @@ An existing database from an older version is upgraded in place on start-up: mis
 
 ### Hosted demo (Render)
 
-The root `Dockerfile` builds a single container: FastAPI serves the API, the built React app and the embedded Google mock on one port. `render.yaml` is a Render Blueprint for it. To deploy, open Render, choose **New → Blueprint**, and pick this repository. Render asks for `ADMIN_PASSWORD` (required) and `DEMO_PASSWORD` (optional) as secrets; `JWT_SECRET` is generated for you.
+The root `Dockerfile` builds a single container: FastAPI serves the API, the built React app and the embedded Google mock on one port. `render.yaml` is a Render Blueprint for it. To deploy, open Render, choose **New → Blueprint**, and pick this repository. Render asks for `ADMIN_PASSWORD` (required) and `DEMO_PASSWORD` (optional) as secrets; `JWT_SECRET` is generated for you. The image itself defaults to `ENV=production`, so a host that skips the Blueprint's settings still gets production mode rather than development mode.
 
 The demo database is SQLite and is seeded while the image builds, without any passwords. The container sets them from the secrets when it starts. Every deploy or restart comes up in the clean demo state, with December published and one acknowledged gap.
 
@@ -126,6 +126,7 @@ The **Security** page shows the live state of each control below, and the **Audi
 
 **Deployment**
 - Production mode refuses to start with a weak `JWT_SECRET` or without `ADMIN_PASSWORD`.
+- An unset `JWT_SECRET` never falls back to the placeholder in the code (which is public): the app generates a random signing key at start-up instead.
 - Secrets never enter an image layer.
 - Containers run as a non-root user.
 

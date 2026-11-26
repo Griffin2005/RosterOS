@@ -69,9 +69,21 @@ def bootstrap_credentials() -> list[tuple[str, str]]:
 
 
 def check_production_config() -> None:
+    """Refuse or repair settings that would be unsafe on a public host.
+
+    An unset JWT_SECRET never falls back to the placeholder in config.py (it
+    is in the public repo, so anyone could sign sessions with it). Instead a
+    random key is generated for this process: sessions end when it restarts,
+    which on a single-instance host also restarts everything else. Set
+    JWT_SECRET to keep sessions across restarts or to run several instances.
+    An explicitly set secret that is too short is refused in production.
+    """
+    import secrets as _secrets
     from .config import DEV_JWT_SECRET
     s = get_settings()
-    if not s.production:
-        return
-    if s.jwt_secret == DEV_JWT_SECRET or len(s.jwt_secret) < 32:
+    if s.jwt_secret == DEV_JWT_SECRET:
+        s.jwt_secret = _secrets.token_urlsafe(48)
+        print("JWT_SECRET is not set: using a random per-process signing key "
+              "(sessions end on restart).", flush=True)
+    elif s.production and len(s.jwt_secret) < 32:
         raise BootstrapError("JWT_SECRET must be a random string of at least 32 characters in production.")

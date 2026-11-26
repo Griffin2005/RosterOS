@@ -276,6 +276,21 @@ def test_bootstrap_rejects_weak_secret(monkeypatch):
         db.commit()
 
 
+def test_unset_jwt_secret_never_uses_the_public_placeholder(monkeypatch):
+    import pytest
+    from app import bootstrap
+    from app.config import DEV_JWT_SECRET, get_settings
+    s = get_settings()
+    for env in ("development", "production"):
+        monkeypatch.setattr(s, "env", env)
+        monkeypatch.setattr(s, "jwt_secret", DEV_JWT_SECRET)
+        bootstrap.check_production_config()
+        assert s.jwt_secret != DEV_JWT_SECRET and len(s.jwt_secret) >= 32
+    monkeypatch.setattr(s, "jwt_secret", "too-short")
+    with pytest.raises(bootstrap.BootstrapError):
+        bootstrap.check_production_config()
+
+
 def test_admin_secret_password_works(client):
     r = client.post("/api/auth/login", json={"username": "admin", "password": ADMIN_PW})
     assert r.status_code == 200 and r.json()["user"]["role"] == "SUPER_ADMIN"

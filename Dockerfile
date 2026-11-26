@@ -36,5 +36,10 @@ ENV STATIC_DIR=/srv/static \
 # the container starts.
 RUN python -m app.seed
 
+# This image is for public hosts, so it is production unless told otherwise:
+# secure cookies, HSTS, no API docs, and start-up refuses a missing
+# ADMIN_PASSWORD. It does not rely on the host's dashboard to set ENV.
+ENV ENV=production
+
 EXPOSE 10000
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --proxy-headers --forwarded-allow-ips='*' --no-server-header"]
