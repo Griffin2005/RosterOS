@@ -6,7 +6,10 @@ DEV_JWT_SECRET = "dev-only-change-me"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Strip surrounding whitespace from every value: a space or Windows line
+    # break pasted into a hosting dashboard would otherwise turn "production"
+    # into development mode and make a password impossible to type.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", str_strip_whitespace=True)
 
     env: str = "development"                    # "production" turns on the strict checks below
     database_url: str = "sqlite:///./rosteros.db"

@@ -81,6 +81,12 @@ def check_production_config() -> None:
     import secrets as _secrets
     from .config import DEV_JWT_SECRET
     s = get_settings()
+    # Names only, never values: lets the host's log show why a deploy behaves
+    # as it does (wrong mode, a secret that did not arrive).
+    print(f"RosterOS starting in {'production' if s.production else 'development'} mode "
+          f"(ENV={s.env!r}); ADMIN_PASSWORD {'set' if s.admin_password else 'not set'}, "
+          f"DEMO_PASSWORD {'set' if s.demo_password else 'not set'}, "
+          f"JWT_SECRET {'not set' if s.jwt_secret == DEV_JWT_SECRET else 'set'}.", flush=True)
     if s.jwt_secret == DEV_JWT_SECRET:
         s.jwt_secret = _secrets.token_urlsafe(48)
         print("JWT_SECRET is not set: using a random per-process signing key "

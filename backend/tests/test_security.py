@@ -291,6 +291,14 @@ def test_unset_jwt_secret_never_uses_the_public_placeholder(monkeypatch):
         bootstrap.check_production_config()
 
 
+def test_settings_ignore_pasted_whitespace(monkeypatch):
+    from app.config import Settings
+    monkeypatch.setenv("ENV", "production\r\n")
+    monkeypatch.setenv("ADMIN_PASSWORD", " Kv8#mPq2!wZr4t\r")
+    s = Settings(_env_file=None)
+    assert s.production and s.admin_password == "Kv8#mPq2!wZr4t"
+
+
 def test_admin_secret_password_works(client):
     r = client.post("/api/auth/login", json={"username": "admin", "password": ADMIN_PW})
     assert r.status_code == 200 and r.json()["user"]["role"] == "SUPER_ADMIN"
