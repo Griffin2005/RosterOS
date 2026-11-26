@@ -299,6 +299,14 @@ def test_settings_ignore_pasted_whitespace(monkeypatch):
     assert s.production and s.admin_password == "Kv8#mPq2!wZr4t"
 
 
+def test_hosted_postgres_urls_use_the_installed_driver():
+    from app.db import normalise_url
+    assert normalise_url("postgres://u:p@h:5432/d") == "postgresql+psycopg://u:p@h:5432/d"
+    assert normalise_url("postgresql://u:p@h/d?sslmode=require") == "postgresql+psycopg://u:p@h/d?sslmode=require"
+    assert normalise_url("postgresql+psycopg://u:p@h/d") == "postgresql+psycopg://u:p@h/d"
+    assert normalise_url("sqlite:///./x.db") == "sqlite:///./x.db"
+
+
 def test_admin_secret_password_works(client):
     r = client.post("/api/auth/login", json={"username": "admin", "password": ADMIN_PW})
     assert r.status_code == 200 and r.json()["user"]["role"] == "SUPER_ADMIN"
